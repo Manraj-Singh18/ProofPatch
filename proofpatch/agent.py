@@ -6,13 +6,14 @@ from typing import Protocol, Sequence
 
 from .models import Claim
 from .pipeline import VerificationReport, verify_repository
+from .repository_context import RepositoryContext, build_repository_context
 
 
 class AgentBackend(Protocol):
     """Model adapter used by the coding-agent runtime."""
 
-    def solve(self, task: str, repo: Path) -> Sequence[Claim]:
-        """Implement the task and return claims about the resulting state."""
+    def solve(self, task: str, repo: Path, context: RepositoryContext) -> Sequence[Claim]:
+        """Implement the task using explicit repository context and return claims."""
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class AgentRun:
     task: str
     claims: tuple[Claim, ...]
     verification: VerificationReport
+    context: RepositoryContext
 
     @property
     def accepted(self) -> bool:
@@ -27,11 +29,7 @@ class AgentRun:
 
 
 class CodingAgent:
-    """Minimal verification-first coding-agent runtime.
-
-    The backend is responsible only for making repository changes and returning
-    claims. ProofPatch independently verifies those claims before accepting the run.
-    """
+    """Verification-first coding-agent runtime with bounded repository context."""
 
     def __init__(self, backend: AgentBackend):
         self.backend = backend
@@ -43,6 +41,7 @@ class CodingAgent:
         test_command: Sequence[str] = ("pytest", "-q"),
     ) -> AgentRun:
         root = Path(repo).resolve()
-        claims = tuple(self.backend.solve(task, root))
+        context = build_repository_context(root)
+        claims = tuple(self.backend.solve(task, root, context))
         verification = verify_repository(root, claims, test_command=test_command)
-        return AgentRun(task=task, claims=claims, verification=verification)
+        return AgentRun(task=task, claims=claims, verification=verification, context=context)
