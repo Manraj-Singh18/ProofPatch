@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .agent_test_loop import run_test_loop
+from .openai_provider import OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
 from .proof_report import ProofReport
 from .provider import ProviderBackend
@@ -44,13 +45,16 @@ def run_openrouter_agent(
 ) -> ProofReport:
     """Run the OpenRouter-backed agent through bounded verification."""
     backend = ProviderBackend(OpenRouterProvider(model=model))
-    return _report(
-        task,
-        run_test_loop(
-            backend,
-            task,
-            repo,
-            test_command=test_command,
-            max_attempts=max_attempts,
-        ),
-    )
+    return _report(task, run_test_loop(backend, task, repo, test_command=test_command, max_attempts=max_attempts))
+
+
+def run_openai_agent(
+    task: str,
+    repo: str | Path = ".",
+    model: str = "gpt-5.6",
+    test_command: Sequence[str] = ("pytest", "-q"),
+    max_attempts: int = 3,
+) -> ProofReport:
+    """Backward-compatible OpenAI entry point for existing integrations/tests."""
+    backend = ProviderBackend(OpenAIProvider(model=model))
+    return _report(task, run_test_loop(backend, task, repo, test_command=test_command, max_attempts=max_attempts))
