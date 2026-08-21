@@ -9,7 +9,6 @@ def _git(repo: Path, *args: str) -> None:
 
 
 def test_context_contains_repo_state_and_bounded_readme(tmp_path: Path) -> None:
-    _git(tmp_path, "init", "-b", "main")
     (tmp_path / "README.md").write_text("# Demo\n\nA repository.\n")
     (tmp_path / "app.py").write_text("print('hello')\n")
     _git(tmp_path, "add", "README.md", "app.py")
@@ -19,12 +18,11 @@ def test_context_contains_repo_state_and_bounded_readme(tmp_path: Path) -> None:
 
     assert context.branch == "main"
     assert context.head
-    assert context.files == ("README.md", "app.py")
-    assert context.readme == "# Demo\n\nA r"
+    assert context.files == (".proofpatch-test-init", "README.md", "app.py")
+    assert context.readme == "# Demo\n\nA "
 
 
 def test_context_includes_untracked_files(tmp_path: Path) -> None:
-    _git(tmp_path, "init", "-b", "main")
     (tmp_path / "notes.txt").write_text("draft\n")
 
     context = build_repository_context(tmp_path)
