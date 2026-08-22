@@ -28,53 +28,16 @@ class LocalModelProvider:
             "stream": False,
             "format": {
                 "type": "object",
-                "properties": {
-                    "edits": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "path": {"type": "string"},
-                                "content": {"type": "string"},
-                            },
-                            "required": ["path", "content"],
-                        },
-                    }
-                },
+                "properties": {"edits": {"type": "array", "items": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
                 "required": ["edits"],
             },
             "options": {"temperature": 0, "num_predict": 1024},
             "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a local coding agent. Return only JSON matching the schema. "
-                        "Return complete file contents for files that must change. "
-                        "Do not modify tests. Do not explain your answer."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "task": request.task,
-                            "repository": {
-                                "files": request.context.files,
-                                "status": request.context.status,
-                                "readme": request.context.readme,
-                            },
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
+                {"role": "system", "content": "You are a local coding agent. Return only JSON matching the schema. Return complete file contents for files that must change. Do not modify tests. Do not explain your answer."},
+                {"role": "user", "content": json.dumps({"task": request.task, "repository": {"files": request.context.files, "status": request.context.status, "readme": request.context.readme}}, ensure_ascii=False)},
             ],
         }
-        req = urllib.request.Request(
-            f"{self.base_url}/api/chat",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+        req = urllib.request.Request(f"{self.base_url}/api/chat", data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as response:
                 raw = response.read().decode("utf-8")
@@ -87,17 +50,10 @@ class LocalModelProvider:
             data: Any = json.loads(content) if isinstance(content, str) else content
         except (KeyError, TypeError, ValueError) as exc:
             raise LocalModelError("local model returned invalid or truncated JSON") from exc
-
         if not isinstance(data, dict) or not isinstance(data.get("edits", []), list):
             raise LocalModelError("local model JSON did not contain an edits array")
-
         try:
-            edits = tuple(
-                FileEdit(str(item["path"]), str(item["content"]))
-                for item in data["edits"]
-            )
+            edits = tuple(FileEdit(str(item["path"]), str(item["content"])) for item in data["edits"])
         except (KeyError, TypeError) as exc:
             raise LocalModelError("local model JSON contained an invalid edit") from exc
-
-        # The model does not self-attest. ProofPatch verifies the resulting repository.
-        return AgentResponse(edits=edits, claims=())
+        return AgentResponse(edits=edits, claims=(), raw_response=content if isinstance(content, str) else json.dumps(content, sort_keys=True))
