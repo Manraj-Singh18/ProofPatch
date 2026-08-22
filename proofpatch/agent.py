@@ -12,8 +12,8 @@ from .repository_context import RepositoryContext, build_repository_context
 class AgentBackend(Protocol):
     """Model adapter used by the coding-agent runtime."""
 
-    def solve(self, task: str, repo: Path, context: RepositoryContext) -> Sequence[Claim]:
-        """Implement the task using explicit repository context and return claims."""
+    def solve(self, task: str, repo: Path) -> Sequence[Claim]:
+        """Implement the task and return claims."""
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,8 @@ class CodingAgent:
     ) -> AgentRun:
         root = Path(repo).resolve()
         context = build_repository_context(root)
-        claims = tuple(self.backend.solve(task, root, context))
+        # Keep the original backend contract stable; repository context remains
+        # available to newer model-provider adapters through their own loop.
+        claims = tuple(self.backend.solve(task, root))
         verification = verify_repository(root, claims, test_command=test_command)
         return AgentRun(task=task, claims=claims, verification=verification, context=context)
