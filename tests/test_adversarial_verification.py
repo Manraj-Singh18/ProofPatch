@@ -32,7 +32,7 @@ def _repo(tmp_path: Path) -> Path:
 def test_modifying_test_is_rejected(tmp_path: Path) -> None:
     run = run_test_loop(TestEditBackend(), "fix generated", _repo(tmp_path), max_attempts=1)
     assert run.accepted is False
-    assert "protected" in run.verification.claims[0].reason.lower()
+    assert "test files" in run.verification.claims[0].reason.lower()
 
 
 def test_failing_tests_override_model_claim(tmp_path: Path) -> None:
