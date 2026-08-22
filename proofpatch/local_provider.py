@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
-from .edit_loop import FileEdit
+from .edit_loop import FileEdit, _is_test_path
 from .models import Claim
 from .provider import AgentRequest, AgentResponse
 
@@ -22,7 +23,31 @@ class LocalModelProvider:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
+    @staticmethod
+    def _source_context(root: str, files: tuple[str, ...], limit: int = 16000) -> dict[str, str]:
+        """Read a bounded set of non-test source files so the local model can make grounded edits."""
+        result: dict[str, str] = {}
+        used = 0
+        base = Path(root)
+        for relative in files:
+            if _is_test_path(relative) or not relative.endswith((".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java")):
+                continue
+            path = base / relative
+            if not path.is_file():
+                continue
+            try:
+                content = path.read_text(errors="replace")
+            except OSError:
+                continue
+            remaining = limit - used
+            if remaining <= 0:
+                break
+            result[relative] = content[:remaining]
+            used += min(len(content), remaining)
+        return result
+
     def complete(self, request: AgentRequest) -> AgentResponse:
+        source_context = self._source_context(request.context.root, request.context.files)
         payload = {
             "model": self.model,
             "stream": False,
@@ -33,8 +58,8 @@ class LocalModelProvider:
             },
             "options": {"temperature": 0, "num_predict": 1024},
             "messages": [
-                {"role": "system", "content": "You are a local coding agent. Return only JSON matching the schema. Return complete file contents for files that must change. Do not modify tests. Do not explain your answer."},
-                {"role": "user", "content": json.dumps({"task": request.task, "repository": {"files": request.context.files, "status": request.context.status, "readme": request.context.readme}}, ensure_ascii=False)},
+                {"role": "system", "content": "You are a local coding agent. Return only JSON matching the schema. Return complete file contents for files that must change. Never modify any test file, test_*.py file, or file under a tests/ directory. Make the smallest source-only change needed for the task. Use the supplied source contents as ground truth. Do not explain your answer."},
+                {"role": "user", "content": json.dumps({"task": request.task, "repository": {"files": request.context.files, "status": request.context.status, "readme": request.context.readme, "source": source_context}}, ensure_ascii=False)},
             ],
         }
         req = urllib.request.Request(f"{self.base_url}/api/chat", data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
