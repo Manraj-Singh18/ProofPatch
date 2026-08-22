@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Protocol, Sequence
 
 from .commitment import evidence_commitment
 from .edit_loop import EditLoopError, FileEdit, _apply_edits
@@ -30,21 +30,9 @@ class TestLoopRun:
 def _rejected_edit_report(error: EditLoopError) -> VerificationReport:
     claim = Claim("proofpatch-edit-policy", "EDIT_POLICY", "agent edits comply with protected-file policy")
     evidence = EvidenceItem(kind="integrity", source="edit-policy", value={"violation": str(error)})
-    result = VerificationResult(
-        claim=claim,
-        status=ClaimStatus.CONTRADICTED,
-        evidence=(evidence,),
-        reason=str(error),
-    )
-    package = {
-        "claims": [{"claim_id": claim.claim_id, "claim_type": claim.claim_type, "assertion": claim.assertion, "status": result.status.value, "reason": result.reason}],
-        "evidence": [{"kind": evidence.kind, "source": evidence.source, "value": evidence.value}],
-    }
-    return VerificationReport(
-        claims=(result,),
-        evidence=(evidence,),
-        commitment=evidence_commitment(package),
-    )
+    result = VerificationResult(claim=claim, status=ClaimStatus.CONTRADICTED, evidence=(evidence,), reason=str(error))
+    package = {"claims": [{"claim_id": claim.claim_id, "claim_type": claim.claim_type, "assertion": claim.assertion, "status": result.status.value, "reason": result.reason}], "evidence": [{"kind": evidence.kind, "source": evidence.source, "value": evidence.value}]}
+    return VerificationReport(claims=(result,), evidence=(evidence,), commitment=evidence_commitment(package))
 
 
 def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", test_command: Sequence[str] = ("pytest", "-q"), max_attempts: int = 3) -> TestLoopRun:
