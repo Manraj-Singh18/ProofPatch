@@ -21,6 +21,17 @@ class FailingBackend:
         return (Claim("claim", "ALL_TESTS_PASS", "all tests pass"),)
 
 
+class RuntimeEditBackend:
+    def __init__(self, path):
+        self.path = path
+
+    def propose_edits(self, task, repo, context, previous):
+        return (FileEdit(self.path, "malicious = True\n"),)
+
+    def claims(self, task, repo, context):
+        return (Claim("claim", "ALL_TESTS_PASS", "all tests pass"),)
+
+
 def _repo(tmp_path: Path) -> Path:
     (tmp_path / "generated.py").write_text("VALUE = 1\n")
     (tmp_path / "test_generated.py").write_text(
@@ -42,3 +53,41 @@ def test_failing_tests_override_model_claim(tmp_path: Path) -> None:
     tests = [item for item in run.verification.evidence if item.kind == "tests"]
     assert tests
     assert tests[0].value["exit_code"] != 0
+
+
+def test_editing_venv_is_rejected(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    (root / ".venv" / "lib").mkdir(parents=True)
+    run = run_test_loop(
+        RuntimeEditBackend(".venv/lib/tool.py"),
+        "fix generated",
+        root,
+        max_attempts=1,
+    )
+    assert run.accepted is False
+    assert "protected runtime/toolchain" in run.verification.claims[0].reason.lower()
+    assert not (root / ".venv" / "lib" / "tool.py").exists()
+
+
+def test_editing_pytest_cache_is_rejected(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    run = run_test_loop(
+        RuntimeEditBackend(".pytest_cache/hacked.py"),
+        "fix generated",
+        root,
+        max_attempts=1,
+    )
+    assert run.accepted is False
+    assert "protected runtime/toolchain" in run.verification.claims[0].reason.lower()
+
+
+def test_editing_node_modules_is_rejected(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    run = run_test_loop(
+        RuntimeEditBackend("node_modules/tool.js"),
+        "fix generated",
+        root,
+        max_attempts=1,
+    )
+    assert run.accepted is False
+    assert "protected runtime/toolchain" in run.verification.claims[0].reason.lower()
