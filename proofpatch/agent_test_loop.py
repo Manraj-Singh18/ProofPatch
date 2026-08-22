@@ -46,6 +46,14 @@ def _with_ledger(report: VerificationReport, ledger: Sequence[EvidenceItem]) -> 
     return VerificationReport(claims=report.claims, evidence=evidence, commitment=commitment)
 
 
+def _mismatch_report(task: str, attempt: int, report: VerificationReport, ledger: Sequence[EvidenceItem]) -> TestLoopRun:
+    claim = Claim("proofpatch-patch-integrity", "PATCH_INTEGRITY", "applied files match the proposed patch")
+    evidence = EvidenceItem(kind="patch-application", source="proofpatch", value={"reason": "actual file hashes do not match proposed edit hashes"})
+    result = VerificationResult(claim=claim, status=ClaimStatus.CONTRADICTED, evidence=(evidence,), reason="applied file content does not match the proposed patch")
+    final = _with_ledger(report, tuple(ledger) + (evidence,))
+    return TestLoopRun(task, attempt, VerificationReport(claims=final.claims + (result,), evidence=final.evidence, commitment=evidence_commitment({"claims": [{"claim_id": r.claim.claim_id, "claim_type": r.claim.claim_type, "assertion": r.claim.assertion, "files": r.claim.files, "status": r.status.value, "reason": r.reason} for r in final.claims + (result,)], "evidence": [{"kind": e.kind, "source": e.source, "value": e.value} for e in final.evidence]})))
+
+
 def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", test_command: Sequence[str] = ("pytest", "-q"), max_attempts: int = 3) -> TestLoopRun:
     """Iterate on bounded edits until verification succeeds or attempts are exhausted."""
     if max_attempts < 1:
@@ -66,13 +74,17 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
         protected_before = {path: value for path, value in before.items() if _is_test_path(path)}
         protected_after = {path: value for path, value in after.items() if _is_test_path(path)}
         expected_after = {edit.path: __import__("hashlib").sha256(edit.content.encode("utf-8")).hexdigest() for edit in edits}
+        actual_after = {p: after.get(p) for p in changed_paths}
+        applied_matches_proposal = all(actual_after.get(p) == h for p, h in expected_after.items())
         ledger = build_ledger(root, edits, before, after, getattr(backend, "raw_response", None)) + (
-            EvidenceItem(kind="patch-application", source="proofpatch", value={"patch_sha256": patch_hash(edits), "expected_after": expected_after, "actual_after": {p: after.get(p) for p in changed_paths}, "applied_matches_proposal": all(after.get(p) == h for p, h in expected_after.items())}),
+            EvidenceItem(kind="patch-application", source="proofpatch", value={"patch_sha256": patch_hash(edits), "expected_after": expected_after, "actual_after": actual_after, "applied_matches_proposal": applied_matches_proposal}),
             EvidenceItem(kind="protected-files", source="sha256", value={"before": protected_before, "after": protected_after, "unchanged": protected_before == protected_after}),
         )
         post_context = build_repository_context(root)
         claims = tuple(backend.claims(task, root, post_context))
         previous = _with_ledger(verify_repository(root, claims, test_command=test_command), ledger)
+        if not applied_matches_proposal:
+            return _mismatch_report(task, attempt, previous, ledger)
         if previous.verified:
             return TestLoopRun(task, attempt, previous)
     return TestLoopRun(task, max_attempts, previous)
