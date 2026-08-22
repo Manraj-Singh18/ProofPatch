@@ -19,6 +19,7 @@ class AgentRequest:
 class AgentResponse:
     edits: tuple[FileEdit, ...]
     claims: tuple[Claim, ...]
+    raw_response: str | None = None
 
 
 class ModelProvider(Protocol):
@@ -34,10 +35,11 @@ class ProviderBackend:
         self._response: AgentResponse | None = None
         self._request_key: tuple[str, str] | None = None
 
+    @property
+    def raw_response(self) -> str | None:
+        return self._response.raw_response if self._response else None
+
     def _complete(self, task: str, context: RepositoryContext) -> AgentResponse:
-        # RepositoryContext is deliberately lightweight and does not expose a
-        # commitment field. Its stable dataclass representation is sufficient
-        # to cache the edit/claim response for the same verification attempt.
         key = (task, repr(context))
         if self._request_key != key:
             self._response = self.provider.complete(AgentRequest(task, context))
@@ -52,6 +54,4 @@ class ProviderBackend:
         response = self._complete(task, context)
         if response.claims:
             return response.claims
-        # The local provider intentionally does not ask the model to self-attest.
-        # ProofPatch creates a deterministic test claim and verifies it from pytest evidence.
         return (Claim("proofpatch-tests", "ALL_TESTS_PASS", "all tests pass"),)
