@@ -7,17 +7,34 @@ from urllib.parse import urlparse
 from .api import LocalAgentService
 
 
+_ALLOWED_ORIGINS = frozenset({
+    "http://127.0.0.1:8080",
+    "http://localhost:8080",
+    "http://[::1]:8080",
+})
+
+
 class PatchProofHandler(BaseHTTPRequestHandler):
     service = LocalAgentService()
+
+    def _cors_origin(self) -> str:
+        origin = self.headers.get("Origin", "")
+        if origin in _ALLOWED_ORIGINS:
+            return origin
+        return "http://127.0.0.1:8080"
+
+    def _cors_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", self._cors_origin())
+        self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def _json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1:8080")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self._cors_headers()
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -26,9 +43,7 @@ class PatchProofHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1:8080")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self._cors_headers()
         self.end_headers()
 
     def do_POST(self) -> None:
