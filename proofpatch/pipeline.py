@@ -19,70 +19,45 @@ class VerificationReport:
 
     @property
     def verified(self) -> bool:
-        return bool(self.claims) and all(
-            result.status == ClaimStatus.VERIFIED for result in self.claims
-        )
+        return bool(self.claims) and all(result.status == ClaimStatus.VERIFIED for result in self.claims)
+
+    def recompute_commitment(self) -> str:
+        package = {
+            "claims": [
+                {
+                    "claim_id": result.claim.claim_id,
+                    "claim_type": result.claim.claim_type,
+                    "assertion": result.claim.assertion,
+                    "files": result.claim.files,
+                    "status": result.status.value,
+                    "reason": result.reason,
+                }
+                for result in self.claims
+            ],
+            "evidence": [
+                {"kind": item.kind, "source": item.source, "value": item.value}
+                for item in self.evidence
+            ],
+        }
+        return evidence_commitment(package)
+
+    def commitment_valid(self) -> bool:
+        return self.recompute_commitment() == self.commitment
 
 
 def _git_item(repo: str | Path) -> EvidenceItem:
     evidence = collect_git_evidence(repo)
-    return EvidenceItem(
-        kind="git",
-        source="git",
-        value={
-            "head": evidence.head,
-            "branch": evidence.branch,
-            "status_porcelain": evidence.status_porcelain,
-            "changed_files": evidence.changed_files,
-            "diff": evidence.diff,
-        },
-    )
+    return EvidenceItem(kind="git", source="git", value={"head": evidence.head, "branch": evidence.branch, "status_porcelain": evidence.status_porcelain, "changed_files": evidence.changed_files, "diff": evidence.diff})
 
 
 def _test_item(repo: str | Path, command: Sequence[str]) -> EvidenceItem:
     evidence = collect_test_evidence(repo, command)
-    return EvidenceItem(
-        kind="tests",
-        source=" ".join(command),
-        value={
-            "command": evidence.command,
-            "exit_code": evidence.exit_code,
-            "passed": evidence.passed,
-            "failed": evidence.failed,
-            "errors": evidence.errors,
-            "all_tests_pass": evidence.all_tests_pass,
-            "raw_output": evidence.raw_output,
-        },
-    )
+    return EvidenceItem(kind="tests", source=" ".join(command), value={"command": evidence.command, "exit_code": evidence.exit_code, "passed": evidence.passed, "failed": evidence.failed, "errors": evidence.errors, "all_tests_pass": evidence.all_tests_pass, "raw_output": evidence.raw_output})
 
 
-def verify_repository(
-    repo: str | Path = ".",
-    claims: Sequence[Claim] = (),
-    test_command: Sequence[str] = ("pytest", "-q"),
-) -> VerificationReport:
+def verify_repository(repo: str | Path = ".", claims: Sequence[Claim] = (), test_command: Sequence[str] = ("pytest", "-q")) -> VerificationReport:
     """Collect repository evidence, verify claims, and commit the evidence package."""
     evidence = (_git_item(repo), _test_item(repo, test_command))
     results = tuple(verify_claim(claim, evidence) for claim in claims)
-    package = {
-        "claims": [
-            {
-                "claim_id": result.claim.claim_id,
-                "claim_type": result.claim.claim_type,
-                "assertion": result.claim.assertion,
-                "files": result.claim.files,
-                "status": result.status.value,
-                "reason": result.reason,
-            }
-            for result in results
-        ],
-        "evidence": [
-            {"kind": item.kind, "source": item.source, "value": item.value}
-            for item in evidence
-        ],
-    }
-    return VerificationReport(
-        claims=results,
-        evidence=evidence,
-        commitment=evidence_commitment(package),
-    )
+    report = VerificationReport(claims=results, evidence=evidence, commitment="")
+    return VerificationReport(claims=results, evidence=evidence, commitment=report.recompute_commitment())
