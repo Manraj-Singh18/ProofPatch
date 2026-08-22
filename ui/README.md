@@ -1,6 +1,6 @@
-# ProofPatch UI
+# PatchProof UI
 
-Minimal browser UI for the localhost ProofPatch API.
+Browser UI for the localhost PatchProof API.
 
 ## Run
 
@@ -19,4 +19,4 @@ python -m http.server 8080
 
 Open `http://127.0.0.1:8080`.
 
-The API remains bound to `127.0.0.1` and the browser sends requests only to the local ProofPatch service.
+The API remains bound to `127.0.0.1`. If Ethereum anchoring is configured, accepted reports display the on-chain transaction in the result view.
