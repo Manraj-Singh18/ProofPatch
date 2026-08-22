@@ -28,7 +28,7 @@ class ModelProvider(Protocol):
 
 
 class ProviderBackend:
-    """Adapter that performs one model request per edit/verification attempt."""
+    """Adapter that performs one model request per edit attempt."""
 
     def __init__(self, provider: ModelProvider):
         self.provider = provider
@@ -51,7 +51,9 @@ class ProviderBackend:
         return self._complete(task, context).edits
 
     def claims(self, task: str, repo: Path, context: RepositoryContext) -> Sequence[Claim]:
-        response = self._complete(task, context)
-        if response.claims:
-            return response.claims
+        # Claims are not evidence and do not require a second model inference.
+        # Reuse claims returned with the edit proposal when present; otherwise
+        # use the deterministic claim that ProofPatch independently verifies.
+        if self._response is not None and self._response.claims:
+            return self._response.claims
         return (Claim("proofpatch-tests", "ALL_TESTS_PASS", "all tests pass"),)
