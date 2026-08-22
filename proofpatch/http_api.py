@@ -76,6 +76,11 @@ class PatchProofHandler(BaseHTTPRequestHandler):
         return
 
 
+# Backwards-compatible name used by the existing test suite and integrations.
+# Keep the public alias while the product-facing class uses the PatchProof name.
+ProofPatchHandler = PatchProofHandler
+
+
 def serve(host: str = "127.0.0.1", port: int = 8787) -> None:
     """Start the local PatchProof HTTP API. It binds to localhost by default."""
     server = ThreadingHTTPServer((host, port), PatchProofHandler)
