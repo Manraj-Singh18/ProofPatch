@@ -59,7 +59,7 @@ class ProofPatchHandler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_GET(self) -> None:
-        parts = urlparse(self.path).strip("/").split("/")
+        parts = urlparse(self.path).path.strip("/").split("/")
         if len(parts) == 2 and parts[0] == "jobs":
             job = self.service.as_dict(parts[1])
             if job is None:
