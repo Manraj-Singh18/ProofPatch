@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import traceback
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from threading import Lock, Thread
@@ -46,19 +47,23 @@ class LocalAgentService:
         if job is None:
             return
         try:
+            print(f"[ProofPatch] job {job_id} started: {job.task}", flush=True)
             report = run_local_agent(job.task, job.repo, max_attempts=max_attempts)
             with self._lock:
                 job.report = report.to_dict()
                 job.status = "accepted" if report.accepted else "rejected"
+            print(f"[ProofPatch] job {job_id} finished: {job.status}", flush=True)
         except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            traceback.print_exc()
             with self._lock:
-                job.error = str(exc)
+                job.error = error
                 job.status = "failed"
+            print(f"[ProofPatch] job {job_id} failed: {error}", flush=True)
 
     def get(self, job_id: str) -> AgentJob | None:
         with self._lock:
             return self._jobs.get(job_id)
 
     def as_dict(self, job_id: str) -> dict[str, Any] | None:
-        job = self.get(job_id)
-        return asdict(job) if job else None
+        return asdict(self.get(job_id)) if self.get(job_id) else None
