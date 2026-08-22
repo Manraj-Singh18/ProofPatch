@@ -18,13 +18,12 @@
 const API='http://127.0.0.1:8787',run=document.querySelector('#run'),result=document.querySelector('#result');
 const ev=(r,k)=>(r?.evidence||[]).find(x=>x.kind===k);
 function step(ok,title,detail=''){let c=ok===true?'ok':ok===false?'bad':'unknown',m=ok===true?'✓':ok===false?'!':'–';return `<div class="step ${c}"><div class="mark">${m}</div><div><strong>${title}</strong><div class="detail">${detail}</div></div></div>`}
-function render(job){result.classList.remove('hidden');if(job.error){result.innerHTML=`<div class="hero"><div><div class="verdict rejected-text">RUN FAILED</div><div class="muted">${job.error}</div></div></div>`;return}const r=job.report;if(!r){result.innerHTML=`<div class="verdict">${job.status}</div>`;return}
+function render(job){result.classList.remove('hidden');if(job.error){result.innerHTML=`<div class="hero"><div><div class="verdict rejected-text">RUN FAILED</div><div class="muted">${job.error}</div></div></div>`;return}const r=job.report;if(!r){result.innerHTML=`<div class="verdict">${job.status}</div><div class="muted">Local Qwen is running; waiting for verification...</div>`;return}
 const p=ev(r,'patch'),h=ev(r,'file-hashes'),a=ev(r,'patch-application'),pf=ev(r,'protected-files'),t=ev(r,'tests'),m=ev(r,'model-response'),integrity=ev(r,'integrity');
 const tv=t?.value||{},av=a?.value||{},pv=pf?.value||{},hv=h?.value||{};
 const patchOk=a?(av.applied_matches_proposal===true||av.matches_proposed===true):null;
 const testsOk=t?(tv.exit_code===0&&tv.failed===0):null,protectedOk=pf?pv.unchanged===true:null,hashOk=h?Object.keys(hv.before||{}).length>0:null;
 const policyViolation=integrity?.value?.violation||'';
-const protectedViolation=policyViolation.toLowerCase().includes('test files')||policyViolation.toLowerCase().includes('protected');
 result.className='card '+(r.accepted?'accepted':'rejected');
 result.innerHTML=`<div class="hero"><div><div class="verdict ${r.accepted?'verified':'rejected-text'}">${r.accepted?'VERIFIED':'REJECTED'}</div><div class="muted">${r.accepted?'Every acceptance check passed.':'ProofPatch found evidence that prevents acceptance.'}</div>${policyViolation?`<div class="reason"><strong>Acceptance blocked:</strong> ${policyViolation}</div>`:''}</div><div class="muted">${r.attempts} attempt${r.attempts===1?'':'s'}</div></div>
 <div class="timeline">
@@ -32,11 +31,13 @@ ${step(m?true:null,'Model response recorded',m?'Recorded as untrusted input; mod
 ${step(p?true:null,'Proposed patch recorded',p?'Exact proposed edit retained in the evidence ledger.':'No patch evidence was retained before rejection.')}
 ${step(hashOk,'Actual file state recorded',hashOk?'Before/after SHA-256 hashes collected independently.':'Not reached before the run was rejected.')}
 ${step(patchOk,'Applied change matches proposal',a?JSON.stringify(av):'Not reached before the run was rejected.')}
-${step(protectedOk,protectedViolation?'Protected-file policy enforced':'Protected files unchanged',protectedViolation?policyViolation:protectedOk?'Protected test files have identical before/after hashes.':'Not reached before the run was rejected.')}
+${step(protectedOk,policyViolation?'Protected-file policy enforced':'Protected files unchanged',policyViolation?policyViolation:protectedOk?'Protected test files have identical before/after hashes.':'Not reached before the run was rejected.')}
 ${step(testsOk,'Tests independently executed',t?`${tv.passed??0} passed · ${tv.failed??0} failed · exit code ${tv.exit_code}`:'Not reached because verification rejected the edit before tests.')}
-${step(r.accepted,'Proof accepted',r.claims?.map(c=>`${c.status}: ${c.assertion}`).join('\n')||'')}
+${step(r.accepted,'Acceptance decision',r.claims?.map(c=>`${c.status}: ${c.assertion}`).join('\n')||'')}
 </div>
 <div class="commit"><strong>Cryptographic commitment</strong><code>${r.commitment}</code></div>
 <div class="card"><div class="section-title">Evidence ledger</div><div class="evidence-grid">${(r.evidence||[]).map(x=>`<div class="evidence"><strong>${x.kind}</strong><pre>${JSON.stringify(x.value,null,2)}</pre></div>`).join('')}</div></div>`}
-run.onclick=async()=>{run.disabled=true;result.classList.remove('hidden');result.className='card';result.innerHTML='<div class="verdict">RUNNING</div><div class="muted">Calling the localhost agent...</div>';try{let cr=await fetch(API+'/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task:document.querySelector('#task').value,repo:document.querySelector('#repo').value})}),job=await cr.json();if(!cr.ok)throw Error(job.error||'could not create job');let rr=await fetch(API+'/jobs/'+job.id+'/run',{method:'POST'}),done=await rr.json();if(!rr.ok)throw Error(done.error||'agent run failed');render(done)}catch(e){result.className='card rejected';result.innerHTML=`<div class="verdict rejected-text">API ERROR</div><div class="muted">${e}</div>`}finally{run.disabled=false}};
+async function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+async function poll(id){for(;;){const res=await fetch(API+'/jobs/'+id);const job=await res.json();if(!res.ok)throw Error(job.error||'job lookup failed');render(job);if(['accepted','rejected','failed'].includes(job.status))return;await sleep(700)}}
+run.onclick=async()=>{run.disabled=true;result.classList.remove('hidden');result.className='card';result.innerHTML='<div class="verdict">QUEUED</div><div class="muted">Starting the local agent...</div>';try{let cr=await fetch(API+'/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task:document.querySelector('#task').value,repo:document.querySelector('#repo').value})}),job=await cr.json();if(!cr.ok)throw Error(job.error||'could not create job');let rr=await fetch(API+'/jobs/'+job.id+'/run',{method:'POST'}),started=await rr.json();if(!rr.ok)throw Error(started.error||'could not start job');render(started);await poll(job.id)}catch(e){result.className='card rejected';result.innerHTML=`<div class="verdict rejected-text">API ERROR</div><div class="muted">${e}</div>`}finally{run.disabled=false}};
 </script></body></html>
