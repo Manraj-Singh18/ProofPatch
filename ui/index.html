@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ProofPatch</title>
+  <style>
+    :root { font-family: Inter, system-ui, sans-serif; color: #e8edf2; background: #0b0f14; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+    main { width: min(900px, 92vw); padding: 40px 0; }
+    h1 { margin: 0 0 8px; font-size: 32px; }
+    p { color: #9aa6b2; }
+    label { display: block; margin: 24px 0 8px; font-weight: 600; }
+    textarea, input { width: 100%; border: 1px solid #2b3440; border-radius: 8px; background: #111720; color: inherit; padding: 12px; font: inherit; }
+    textarea { min-height: 120px; resize: vertical; }
+    button { margin-top: 18px; padding: 11px 18px; border: 0; border-radius: 8px; background: #e8edf2; color: #0b0f14; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: wait; }
+    #status { margin-top: 28px; padding: 18px; border: 1px solid #2b3440; border-radius: 10px; white-space: pre-wrap; }
+    .accepted { border-color: #4caf82 !important; }
+    .rejected, .failed { border-color: #d66 !important; }
+    code { color: #cbd5e1; word-break: break-all; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>ProofPatch</h1>
+  <p>Local coding agent with independently verified proof.</p>
+
+  <label for="task">Task</label>
+  <textarea id="task">Fix the add() function so that test_add passes. Do not modify the test.</textarea>
+
+  <label for="repo">Repository</label>
+  <input id="repo" value="/Users/manraj/proofpatch-agent-test">
+
+  <button id="run">Run local agent</button>
+  <div id="status">Ready.</div>
+</main>
+<script>
+const API = 'http://127.0.0.1:8787';
+const run = document.querySelector('#run');
+const status = document.querySelector('#status');
+
+function show(job) {
+  status.className = job.status;
+  status.textContent = `Status: ${job.status}\nJob: ${job.id}`;
+  if (job.error) status.textContent += `\n\nError: ${job.error}`;
+  if (job.report) {
+    status.textContent += `\n\nAccepted: ${job.report.accepted}`;
+    status.textContent += `\nAttempts: ${job.report.attempts}`;
+    status.textContent += `\nCommitment: ${job.report.commitment}`;
+    status.textContent += `\n\nClaims:\n${JSON.stringify(job.report.claims, null, 2)}`;
+    status.textContent += `\n\nEvidence:\n${JSON.stringify(job.report.evidence, null, 2)}`;
+  }
+}
+
+run.onclick = async () => {
+  run.disabled = true;
+  status.className = '';
+  status.textContent = 'Creating job...';
+  try {
+    const created = await fetch(API + '/jobs', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({task: document.querySelector('#task').value, repo: document.querySelector('#repo').value})
+    }).then(r => r.json());
+    show(created);
+    status.textContent += '\n\nRunning local model...';
+    const result = await fetch(API + '/jobs/' + created.id + '/run', {method: 'POST'}).then(r => r.json());
+    show(result);
+  } catch (err) {
+    status.className = 'failed';
+    status.textContent = 'API error: ' + err;
+  } finally {
+    run.disabled = false;
+  }
+};
+</script>
+</body>
+</html>
