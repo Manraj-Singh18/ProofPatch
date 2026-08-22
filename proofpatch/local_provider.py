@@ -11,6 +11,15 @@ from .models import Claim
 from .provider import AgentRequest, AgentResponse
 
 
+_SOURCE_EXTENSIONS = (".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java")
+_PLACEHOLDER_PATHS = {
+    "path/to/your/file",
+    "path/to/your/file.py",
+    "path/to/file",
+    "path/to/file.py",
+}
+
+
 class LocalModelError(RuntimeError):
     """Raised when the localhost model cannot produce a valid response."""
 
@@ -30,7 +39,7 @@ class LocalModelProvider:
         used = 0
         base = Path(root)
         for relative in files:
-            if _is_test_path(relative) or not relative.endswith((".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java")):
+            if _is_test_path(relative) or not relative.endswith(_SOURCE_EXTENSIONS):
                 continue
             path = base / relative
             if not path.is_file():
@@ -94,9 +103,31 @@ class LocalModelProvider:
                 return value
         raise LocalModelError("local model returned invalid or truncated JSON")
 
+    @staticmethod
+    def _validate_edit_paths(edits: tuple[FileEdit, ...], source_context: dict[str, str]) -> None:
+        """Reject placeholder or ungrounded paths before they can become a no-op patch."""
+        source_paths = set(source_context)
+        for edit in edits:
+            path = edit.path.replace("\\", "/").strip()
+            if path in _PLACEHOLDER_PATHS:
+                raise LocalModelError(
+                    f"local model returned a placeholder edit path: {edit.path!r}; "
+                    "it must choose a real source file from the supplied source context"
+                )
+            if path in source_paths:
+                continue
+            if path.endswith(_SOURCE_EXTENSIONS):
+                # New source files are allowed, but they must use a real source-file path.
+                continue
+            raise LocalModelError(
+                f"local model returned an ungrounded edit path: {edit.path!r}; "
+                "choose an existing source file or a new source file with a supported extension"
+            )
+
     def complete(self, request: AgentRequest) -> AgentResponse:
         source_context = self._source_context(request.context.root, request.context.files)
         test_context = self._test_context(request.context.root, request.context.files)
+        editable_source_files = tuple(source_context)
         payload = {
             "model": self.model,
             "stream": False,
@@ -131,6 +162,8 @@ class LocalModelProvider:
                         "file under a tests/ directory, or runtime/toolchain directory such as .venv, .git, __pycache__, "
                         ".pytest_cache, node_modules, or similar. Make the smallest source-only change needed. "
                         "Use the supplied source and tests as ground truth. Return complete contents for every changed file. "
+                        "IMPORTANT: choose edit paths ONLY from the named files in repository.source, unless you are creating "
+                        "a genuinely new source file. Do not copy placeholder/example paths such as path/to/your/file. "
                         "Do not use markdown fences or explanations."
                     ),
                 },
@@ -140,11 +173,11 @@ class LocalModelProvider:
                         {
                             "task": request.task,
                             "repository": {
-                                "files": request.context.files,
-                                "status": request.context.status,
-                                "readme": request.context.readme,
+                                "editable_source_files": editable_source_files,
                                 "source": source_context,
                                 "tests_read_only": test_context,
+                                "status": request.context.status,
+                                "readme": request.context.readme,
                             },
                         },
                         ensure_ascii=False,
@@ -176,4 +209,5 @@ class LocalModelProvider:
             edits = tuple(FileEdit(str(item["path"]), str(item["content"])) for item in data["edits"])
         except (KeyError, TypeError) as exc:
             raise LocalModelError("local model JSON contained an invalid edit") from exc
+        self._validate_edit_paths(edits, source_context)
         return AgentResponse(edits=edits, claims=(), raw_response=content if isinstance(content, str) else json.dumps(content, sort_keys=True))
