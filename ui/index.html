@@ -8,18 +8,29 @@
     :root { font-family: Inter, system-ui, sans-serif; color: #e8edf2; background: #0b0f14; }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
-    main { width: min(900px, 92vw); padding: 40px 0; }
-    h1 { margin: 0 0 8px; font-size: 32px; }
+    main { width: min(920px, 92vw); padding: 40px 0; }
+    h1 { margin: 0 0 8px; font-size: 34px; }
     p { color: #9aa6b2; }
     label { display: block; margin: 24px 0 8px; font-weight: 600; }
     textarea, input { width: 100%; border: 1px solid #2b3440; border-radius: 8px; background: #111720; color: inherit; padding: 12px; font: inherit; }
     textarea { min-height: 120px; resize: vertical; }
     button { margin-top: 18px; padding: 11px 18px; border: 0; border-radius: 8px; background: #e8edf2; color: #0b0f14; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .5; cursor: wait; }
-    #status { margin-top: 28px; padding: 18px; border: 1px solid #2b3440; border-radius: 10px; white-space: pre-wrap; }
+    .panel { margin-top: 28px; padding: 22px; border: 1px solid #2b3440; border-radius: 12px; background: #0f151d; }
     .accepted { border-color: #4caf82 !important; }
     .rejected, .failed { border-color: #d66 !important; }
-    code { color: #cbd5e1; word-break: break-all; }
+    .verdict { font-size: 26px; font-weight: 800; margin-bottom: 6px; }
+    .subtle { color: #9aa6b2; font-size: 14px; }
+    .timeline { display: grid; gap: 10px; margin-top: 18px; }
+    .step { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid #252e39; border-radius: 8px; }
+    .mark { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; flex: 0 0 auto; }
+    .ok .mark { background: #173d2b; color: #79d5a4; }
+    .bad .mark { background: #4a2024; color: #ff9a9a; }
+    .unknown .mark { background: #27313d; color: #aeb9c5; }
+    .step strong { display: block; }
+    .detail { color: #9aa6b2; margin-top: 3px; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+    .commitment { margin-top: 18px; padding: 14px; background: #111720; border-radius: 8px; }
+    .commitment code { display: block; margin-top: 6px; color: #dbe4ee; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -34,43 +45,87 @@
   <input id="repo" value="/Users/manraj/proofpatch-agent-test">
 
   <button id="run">Run local agent</button>
-  <div id="status">Ready.</div>
+  <div id="result" class="panel" hidden></div>
 </main>
 <script>
 const API = 'http://127.0.0.1:8787';
 const run = document.querySelector('#run');
-const status = document.querySelector('#status');
+const result = document.querySelector('#result');
+
+function evidenceByKind(report, kind) {
+  return (report?.evidence || []).find(item => item.kind === kind);
+}
+
+function renderStep(ok, title, detail) {
+  const cls = ok === true ? 'ok' : ok === false ? 'bad' : 'unknown';
+  const mark = ok === true ? '✓' : ok === false ? '!' : '–';
+  return `<div class="step ${cls}"><div class="mark">${mark}</div><div><strong>${title}</strong>${detail ? `<div class="detail">${detail}</div>` : ''}</div></div>`;
+}
 
 function show(job) {
-  status.className = job.status;
-  status.textContent = `Status: ${job.status}\nJob: ${job.id}`;
-  if (job.error) status.textContent += `\n\nError: ${job.error}`;
-  if (job.report) {
-    status.textContent += `\n\nAccepted: ${job.report.accepted}`;
-    status.textContent += `\nAttempts: ${job.report.attempts}`;
-    status.textContent += `\nCommitment: ${job.report.commitment}`;
-    status.textContent += `\n\nClaims:\n${JSON.stringify(job.report.claims, null, 2)}`;
-    status.textContent += `\n\nEvidence:\n${JSON.stringify(job.report.evidence, null, 2)}`;
+  result.hidden = false;
+  result.className = 'panel ' + (job.status || '');
+  if (job.error) {
+    result.innerHTML = `<div class="verdict">RUN FAILED</div><div class="subtle">${job.error}</div>`;
+    return;
   }
+  const report = job.report;
+  if (!report) {
+    result.innerHTML = `<div class="verdict">${job.status.toUpperCase()}</div><div class="subtle">Job ${job.id}</div>`;
+    return;
+  }
+
+  const patch = evidenceByKind(report, 'patch');
+  const hashes = evidenceByKind(report, 'file-hashes');
+  const application = evidenceByKind(report, 'patch-application');
+  const protectedFiles = evidenceByKind(report, 'protected-files');
+  const tests = evidenceByKind(report, 'tests');
+  const model = evidenceByKind(report, 'model-response');
+  const testValue = tests?.value || {};
+  const protectedValue = protectedFiles?.value || {};
+  const applicationValue = application?.value || {};
+  const hashValue = hashes?.value || {};
+
+  const testOk = tests ? testValue.exit_code === 0 && testValue.failed === 0 : null;
+  const protectedOk = protectedFiles ? protectedValue.unchanged === true : null;
+  const patchOk = application ? applicationValue.matches_proposed === true : null;
+  const filesOk = hashes ? Object.keys(hashValue.before || {}).length > 0 : null;
+
+  result.innerHTML = `
+    <div class="verdict">${report.accepted ? 'VERIFIED' : 'RUN REJECTED'}</div>
+    <div class="subtle">Job ${job.id} · ${report.attempts} attempt${report.attempts === 1 ? '' : 's'}</div>
+    <div class="timeline">
+      ${renderStep(!!model, 'Local model response recorded', model ? 'Model output is retained as evidence, not treated as proof.' : '')}
+      ${renderStep(!!patch, 'Proposed patch recorded', patch ? 'The exact proposed edit is included in the evidence ledger.' : '')}
+      ${renderStep(filesOk, 'Actual file changes recorded', filesOk ? 'Before/after file hashes were collected independently.' : '')}
+      ${renderStep(patchOk, 'Applied patch matches proposal', application ? String(applicationValue) : '')}
+      ${renderStep(protectedOk, 'Protected files unchanged', protectedOk ? 'No protected test file changed.' : protectedFiles ? JSON.stringify(protectedValue) : '')}
+      ${renderStep(testOk, 'Tests independently executed', tests ? `${testValue.passed ?? 0} passed · ${testValue.failed ?? 0} failed · exit code ${testValue.exit_code}` : '')}
+      ${renderStep(report.accepted, 'Proof accepted', report.claims?.map(c => `${c.status}: ${c.assertion}`).join('\n') || '')}
+    </div>
+    <div class="commitment"><strong>Cryptographic commitment</strong><code>${report.commitment}</code></div>
+  `;
 }
 
 run.onclick = async () => {
   run.disabled = true;
-  status.className = '';
-  status.textContent = 'Creating job...';
+  result.hidden = false;
+  result.className = 'panel';
+  result.innerHTML = '<div class="verdict">RUNNING</div><div class="subtle">Creating job and running the local model...</div>';
   try {
-    const created = await fetch(API + '/jobs', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+    const createdResponse = await fetch(API + '/jobs', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({task: document.querySelector('#task').value, repo: document.querySelector('#repo').value})
-    }).then(r => r.json());
-    show(created);
-    status.textContent += '\n\nRunning local model...';
-    const result = await fetch(API + '/jobs/' + created.id + '/run', {method: 'POST'}).then(r => r.json());
-    show(result);
+    });
+    const created = await createdResponse.json();
+    if (!createdResponse.ok) throw new Error(created.error || 'could not create job');
+    const runResponse = await fetch(API + '/jobs/' + created.id + '/run', {method: 'POST'});
+    const finished = await runResponse.json();
+    if (!runResponse.ok) throw new Error(finished.error || 'agent run failed');
+    show(finished);
   } catch (err) {
-    status.className = 'failed';
-    status.textContent = 'API error: ' + err;
+    result.className = 'panel failed';
+    result.innerHTML = `<div class="verdict">API ERROR</div><div class="subtle">${err}</div>`;
   } finally {
     run.disabled = false;
   }
