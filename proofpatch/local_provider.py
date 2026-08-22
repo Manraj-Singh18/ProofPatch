@@ -25,12 +25,35 @@ class LocalModelProvider:
 
     @staticmethod
     def _source_context(root: str, files: tuple[str, ...], limit: int = 12000) -> dict[str, str]:
-        """Read a bounded set of non-test source files so the local model can make grounded edits."""
+        """Read bounded non-test source files so the local model can make grounded edits."""
         result: dict[str, str] = {}
         used = 0
         base = Path(root)
         for relative in files:
             if _is_test_path(relative) or not relative.endswith((".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java")):
+                continue
+            path = base / relative
+            if not path.is_file():
+                continue
+            try:
+                content = path.read_text(errors="replace")
+            except OSError:
+                continue
+            remaining = limit - used
+            if remaining <= 0:
+                break
+            result[relative] = content[:remaining]
+            used += min(len(content), remaining)
+        return result
+
+    @staticmethod
+    def _test_context(root: str, files: tuple[str, ...], limit: int = 8000) -> dict[str, str]:
+        """Read tests as immutable requirements; the model may inspect them but never edit them."""
+        result: dict[str, str] = {}
+        used = 0
+        base = Path(root)
+        for relative in files:
+            if not _is_test_path(relative):
                 continue
             path = base / relative
             if not path.is_file():
@@ -73,21 +96,68 @@ class LocalModelProvider:
 
     def complete(self, request: AgentRequest) -> AgentResponse:
         source_context = self._source_context(request.context.root, request.context.files)
+        test_context = self._test_context(request.context.root, request.context.files)
         payload = {
             "model": self.model,
             "stream": False,
             "format": {
                 "type": "object",
-                "properties": {"edits": {"type": "array", "items": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
+                "properties": {
+                    "edits": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "content": {"type": "string"},
+                            },
+                            "required": ["path", "content"],
+                        },
+                    }
+                },
                 "required": ["edits"],
             },
             "options": {"temperature": 0, "num_predict": 1024, "num_ctx": 4096},
             "messages": [
-                {"role": "system", "content": "You are a local coding agent. Return exactly one JSON object and nothing else. Schema: {\"edits\":[{\"path\":\"relative/path\",\"content\":\"complete file contents\"}]}. Never modify any test file, test_*.py file, or file under a tests/ directory. Make the smallest source-only change needed for the task. Use the supplied source contents as ground truth. Do not use markdown fences or explanations."},
-                {"role": "user", "content": json.dumps({"task": request.task, "repository": {"files": request.context.files, "status": request.context.status, "readme": request.context.readme, "source": source_context}}, ensure_ascii=False)},
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a local coding agent. Return exactly one JSON object and nothing else. "
+                        "Schema: {\"edits\":[{\"path\":\"relative/path\",\"content\":\"complete file contents\"}]}. "
+                        "The task must be completed by changing source code when the current source does not satisfy it. "
+                        "If the task describes a failing test or requested bug fix, an empty edits array is NOT a valid solution "
+                        "unless the supplied source already satisfies the task. Inspect the supplied source and read-only test "
+                        "contents to determine the smallest required source change. Never modify any test file, test_*.py file, "
+                        "file under a tests/ directory, or runtime/toolchain directory such as .venv, .git, __pycache__, "
+                        ".pytest_cache, node_modules, or similar. Make the smallest source-only change needed. "
+                        "Use the supplied source and tests as ground truth. Return complete contents for every changed file. "
+                        "Do not use markdown fences or explanations."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "task": request.task,
+                            "repository": {
+                                "files": request.context.files,
+                                "status": request.context.status,
+                                "readme": request.context.readme,
+                                "source": source_context,
+                                "tests_read_only": test_context,
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
             ],
         }
-        req = urllib.request.Request(f"{self.base_url}/api/chat", data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+        req = urllib.request.Request(
+            f"{self.base_url}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as response:
                 raw = response.read().decode("utf-8")
