@@ -22,20 +22,33 @@ class AgentResponse:
 
 
 class ModelProvider(Protocol):
-    """Provider-neutral interface for a coding model."""
-
     def complete(self, request: AgentRequest) -> AgentResponse:
-        """Return proposed edits and claims; do not decide verification status."""
+        """Return proposed edits and optional claims; never decide verification status."""
 
 
 class ProviderBackend:
-    """Adapter from a model provider to the bounded edit-loop backend."""
+    """Adapter that performs one model request per edit/verification attempt."""
 
     def __init__(self, provider: ModelProvider):
         self.provider = provider
+        self._response: AgentResponse | None = None
+        self._request_key: tuple[str, str] | None = None
+
+    def _complete(self, task: str, context: RepositoryContext) -> AgentResponse:
+        key = (task, context.commitment)
+        if self._request_key != key:
+            self._response = self.provider.complete(AgentRequest(task, context))
+            self._request_key = key
+        return self._response
 
     def propose_edits(self, task: str, repo: Path, context: RepositoryContext, previous=None) -> Sequence[FileEdit]:
-        return self.provider.complete(AgentRequest(task, context)).edits
+        response = self._complete(task, context)
+        return response.edits
 
     def claims(self, task: str, repo: Path, context: RepositoryContext) -> Sequence[Claim]:
-        return self.provider.complete(AgentRequest(task, context)).claims
+        response = self._complete(task, context)
+        if response.claims:
+            return response.claims
+        # The local provider intentionally does not ask the model to self-attest.
+        # ProofPatch creates a deterministic test claim and verifies it from pytest evidence.
+        return (Claim("proofpatch-tests", "ALL_TESTS_PASS", "all tests pass"),)
