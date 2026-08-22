@@ -18,13 +18,8 @@ class FileEdit:
 
 
 class EditBackend(Protocol):
-    def propose_edits(
-        self, task: str, repo: Path, context: RepositoryContext
-    ) -> Sequence[FileEdit]:
-        """Return file edits for the current task."""
-
-    def claims(self, task: str, repo: Path, context: RepositoryContext) -> Sequence[Claim]:
-        """Return claims about the resulting repository state."""
+    def propose_edits(self, task: str, repo: Path, context: RepositoryContext) -> Sequence[FileEdit]: ...
+    def claims(self, task: str, repo: Path, context: RepositoryContext) -> Sequence[Claim]: ...
 
 
 class EditLoopError(RuntimeError):
@@ -42,9 +37,22 @@ class EditRun:
         return self.verification.verified
 
 
+def _is_test_path(path: str) -> bool:
+    """Return whether a repository-relative path is a Python test file."""
+    normalized = path.replace("\\", "/")
+    name = normalized.rsplit("/", 1)[-1]
+    return (
+        name.startswith("test_") and name.endswith(".py")
+    ) or (
+        name.startswith("test") and name.endswith(".py")
+    ) or "/tests/" in f"/{normalized}/"
+
+
 def _apply_edits(repo: Path, edits: Sequence[FileEdit]) -> None:
     root = repo.resolve()
     for edit in edits:
+        if _is_test_path(edit.path):
+            raise EditLoopError(f"agent edits may not modify test files: {edit.path}")
         target = (root / edit.path).resolve()
         if root != target and root not in target.parents:
             raise EditLoopError(f"edit escapes repository: {edit.path}")
@@ -54,12 +62,7 @@ def _apply_edits(repo: Path, edits: Sequence[FileEdit]) -> None:
         target.write_text(edit.content)
 
 
-def run_edit_loop(
-    backend: EditBackend,
-    task: str,
-    repo: str | Path = ".",
-    test_command: Sequence[str] = ("pytest", "-q"),
-) -> EditRun:
+def run_edit_loop(backend: EditBackend, task: str, repo: str | Path = ".", test_command: Sequence[str] = ("pytest", "-q")) -> EditRun:
     """Apply one bounded edit proposal, then independently verify its claims."""
     root = Path(repo).resolve()
     context = build_repository_context(root)
