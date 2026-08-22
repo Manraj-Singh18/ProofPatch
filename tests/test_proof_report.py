@@ -24,7 +24,14 @@ def test_proof_report_contains_verification_and_commitment(tmp_path: Path) -> No
     assert report.attempts == 1
     assert len(report.commitment) == 64
     assert report.claims[0]["status"] == "VERIFIED"
-    assert {item["kind"] for item in report.evidence} == {"git", "tests"}
+    assert {item["kind"] for item in report.evidence} == {
+        "git",
+        "tests",
+        "patch",
+        "file-hashes",
+        "patch-application",
+        "protected-files",
+    }
 
     output = tmp_path / "proof.json"
     report.write(output)
