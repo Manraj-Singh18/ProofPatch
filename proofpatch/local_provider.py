@@ -15,21 +15,38 @@ class LocalModelError(RuntimeError):
 
 
 class LocalModelProvider:
-    """Provider for a local Ollama-compatible chat endpoint."""
+    """Provider for a local Ollama chat endpoint."""
 
-    def __init__(self, model: str = "qwen2.5-coder:7b", base_url: str = "http://127.0.0.1:11434", timeout: float = 120.0) -> None:
+    def __init__(self, model: str = "qwen2.5-coder:7b", base_url: str = "http://127.0.0.1:11434", timeout: float = 90.0) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def complete(self, request: AgentRequest) -> AgentResponse:
+    def _request(self, request: AgentRequest) -> dict[str, Any]:
+        repository = {
+            "files": request.context.files,
+            "status": request.context.status,
+            "readme": request.context.readme,
+        }
         payload = {
             "model": self.model,
             "stream": False,
             "format": "json",
+            "options": {"temperature": 0, "num_predict": 512},
             "messages": [
-                {"role": "system", "content": "You are a local coding agent. Return JSON only with keys edits and claims. Each edit has path and content. Each claim has claim_id, claim_type, assertion, and files. Never claim tests passed; ProofPatch verifies that independently."},
-                {"role": "user", "content": json.dumps({"task": request.task, "repository": {"root": request.context.root, "branch": request.context.branch, "files": request.context.files, "status": request.context.status, "readme": request.context.readme}}, ensure_ascii=False)},
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a local coding agent. Return ONLY one JSON object. "
+                        "The object must contain an edits array. Each edit has path and content. "
+                        "Do not explain your answer. Do not include markdown. "
+                        "Do not modify tests. ProofPatch verifies tests independently."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps({"task": request.task, "repository": repository}, ensure_ascii=False),
+                },
             ],
         }
         req = urllib.request.Request(
@@ -41,14 +58,24 @@ class LocalModelProvider:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as response:
                 raw = response.read().decode("utf-8")
-        except urllib.error.URLError as exc:
-            raise LocalModelError(f"local model unavailable at {self.base_url}; start Ollama and pull {self.model}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise LocalModelError(
+                f"local model timed out or is unavailable at {self.base_url}"
+            ) from exc
         try:
             response_data = json.loads(raw)
             content = response_data["message"]["content"]
             data: Any = json.loads(content) if isinstance(content, str) else content
-            edits = tuple(FileEdit(str(item["path"]), str(item["content"])) for item in data.get("edits", []))
-            claims = tuple(Claim(str(item["claim_id"]), str(item["claim_type"]), str(item["assertion"]), tuple(str(path) for path in item.get("files", []))) for item in data.get("claims", []))
         except (KeyError, TypeError, ValueError) as exc:
-            raise LocalModelError("local model returned invalid structured output") from exc
+            raise LocalModelError("local model returned invalid JSON") from exc
+        if not isinstance(data, dict) or not isinstance(data.get("edits", []), list):
+            raise LocalModelError("local model response must contain an edits array")
+        return data
+
+    def complete(self, request: AgentRequest) -> AgentResponse:
+        data = self._request(request)
+        edits = tuple(FileEdit(str(item["path"]), str(item["content"])) for item in data.get("edits", []))
+        # Claims are deliberately generated locally by ProofPatch verification.
+        # The model is not trusted to assert that its own changes passed tests.
+        claims: tuple[Claim, ...] = ()
         return AgentResponse(edits=edits, claims=claims)
