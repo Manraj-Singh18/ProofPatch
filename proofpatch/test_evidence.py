@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import shutil
 import subprocess
 from typing import Iterable
 
@@ -50,13 +51,21 @@ def collect_test_evidence(
     repo: str | Path = ".", command: Iterable[str] = ("pytest", "-q")
 ) -> TestEvidence:
     """Run a test command and normalize its result into deterministic evidence."""
+    root = Path(repo).resolve()
     args = tuple(command)
     if not args:
         raise TestEvidenceError("test command cannot be empty")
 
+    # A coding agent may replace a Python module with another file of the same
+    # size within the same timestamp window. Remove cached bytecode so a retry
+    # verifies the bytes just written rather than stale __pycache__ output.
+    for cache in root.rglob("__pycache__"):
+        if cache.is_dir():
+            shutil.rmtree(cache)
+
     try:
         result = subprocess.run(
-            list(args), cwd=Path(repo).resolve(), capture_output=True, text=True
+            list(args), cwd=root, capture_output=True, text=True
         )
     except OSError as exc:
         raise TestEvidenceError(f"unable to execute test command: {' '.join(args)}") from exc
