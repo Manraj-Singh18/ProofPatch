@@ -7,7 +7,7 @@ from typing import Any, Sequence
 
 from .agent_test_loop import run_test_loop
 from .edit_loop import EditBackend
-from .models import ClaimStatus
+from .ethereum_anchor import anchor_configured, anchor_proof
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,7 @@ class ProofReport:
     commitment: str
     claims: tuple[dict[str, Any], ...]
     evidence: tuple[dict[str, Any], ...]
+    ethereum_anchor: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -27,6 +28,15 @@ class ProofReport:
 
     def write(self, path: str | Path) -> None:
         Path(path).write_text(self.to_json() + "\n")
+
+
+def _maybe_anchor(commitment: str, accepted: bool) -> dict[str, Any] | None:
+    if not anchor_configured():
+        return None
+    try:
+        return anchor_proof(commitment, accepted).to_dict()
+    except Exception as exc:
+        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
 
 
 def run_with_proof_report(
@@ -66,4 +76,5 @@ def run_with_proof_report(
         commitment=verification.commitment,
         claims=claims,
         evidence=evidence,
+        ethereum_anchor=_maybe_anchor(verification.commitment, verification.verified),
     )
