@@ -37,9 +37,13 @@ class EditRun:
         return self.verification.verified
 
 
+def _normalized_path(path: str) -> str:
+    return path.replace("\\", "/").strip("/")
+
+
 def _is_test_path(path: str) -> bool:
     """Return whether a repository-relative path is a Python test file."""
-    normalized = path.replace("\\", "/")
+    normalized = _normalized_path(path)
     name = normalized.rsplit("/", 1)[-1]
     return (
         name.startswith("test_") and name.endswith(".py")
@@ -48,11 +52,42 @@ def _is_test_path(path: str) -> bool:
     ) or "/tests/" in f"/{normalized}/"
 
 
+_PROTECTED_DIRECTORIES = frozenset({
+    ".git",
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "node_modules",
+})
+
+
+def _is_protected_path(path: str) -> bool:
+    """Return whether an agent must never modify this path."""
+    normalized = _normalized_path(path)
+    parts = normalized.split("/") if normalized else ()
+    if any(part in _PROTECTED_DIRECTORIES for part in parts):
+        return True
+    return _is_test_path(normalized)
+
+
+def _protected_path_reason(path: str) -> str:
+    normalized = _normalized_path(path)
+    parts = normalized.split("/") if normalized else ()
+    protected_dir = next((part for part in parts if part in _PROTECTED_DIRECTORIES), None)
+    if protected_dir:
+        return f"agent edits may not modify protected runtime/toolchain path: {path}"
+    return f"agent edits may not modify test files: {path}"
+
+
 def _apply_edits(repo: Path, edits: Sequence[FileEdit]) -> None:
     root = repo.resolve()
     for edit in edits:
-        if _is_test_path(edit.path):
-            raise EditLoopError(f"agent edits may not modify test files: {edit.path}")
+        if _is_protected_path(edit.path):
+            raise EditLoopError(_protected_path_reason(edit.path))
         target = (root / edit.path).resolve()
         if root != target and root not in target.parents:
             raise EditLoopError(f"edit escapes repository: {edit.path}")
