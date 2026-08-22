@@ -18,13 +18,13 @@ class LocalModelError(RuntimeError):
 class LocalModelProvider:
     """Provider for a local Ollama chat endpoint."""
 
-    def __init__(self, model: str = "qwen2.5-coder:7b", base_url: str = "http://127.0.0.1:11434", timeout: float = 120.0) -> None:
+    def __init__(self, model: str = "qwen2.5-coder:7b", base_url: str = "http://127.0.0.1:11434", timeout: float = 300.0) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
     @staticmethod
-    def _source_context(root: str, files: tuple[str, ...], limit: int = 16000) -> dict[str, str]:
+    def _source_context(root: str, files: tuple[str, ...], limit: int = 12000) -> dict[str, str]:
         """Read a bounded set of non-test source files so the local model can make grounded edits."""
         result: dict[str, str] = {}
         used = 0
@@ -81,7 +81,7 @@ class LocalModelProvider:
                 "properties": {"edits": {"type": "array", "items": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
                 "required": ["edits"],
             },
-            "options": {"temperature": 0, "num_predict": 2048},
+            "options": {"temperature": 0, "num_predict": 1024, "num_ctx": 4096},
             "messages": [
                 {"role": "system", "content": "You are a local coding agent. Return exactly one JSON object and nothing else. Schema: {\"edits\":[{\"path\":\"relative/path\",\"content\":\"complete file contents\"}]}. Never modify any test file, test_*.py file, or file under a tests/ directory. Make the smallest source-only change needed for the task. Use the supplied source contents as ground truth. Do not use markdown fences or explanations."},
                 {"role": "user", "content": json.dumps({"task": request.task, "repository": {"files": request.context.files, "status": request.context.status, "readme": request.context.readme, "source": source_context}}, ensure_ascii=False)},
@@ -92,7 +92,7 @@ class LocalModelProvider:
             with urllib.request.urlopen(req, timeout=self.timeout) as response:
                 raw = response.read().decode("utf-8")
         except (urllib.error.URLError, TimeoutError) as exc:
-            raise LocalModelError(f"local model timed out or is unavailable at {self.base_url}") from exc
+            raise LocalModelError(f"local model timed out or is unavailable at {self.base_url} after {self.timeout:.0f}s") from exc
 
         try:
             response_data = json.loads(raw)
