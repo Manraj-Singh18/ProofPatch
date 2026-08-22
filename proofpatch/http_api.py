@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from .api import LocalAgentService
 
 
-class ProofPatchHandler(BaseHTTPRequestHandler):
+class PatchProofHandler(BaseHTTPRequestHandler):
     service = LocalAgentService()
 
     def _json(self, status: int, payload: dict) -> None:
@@ -77,9 +77,9 @@ class ProofPatchHandler(BaseHTTPRequestHandler):
 
 
 def serve(host: str = "127.0.0.1", port: int = 8787) -> None:
-    """Start the local HTTP API. It binds to localhost by default."""
-    server = ThreadingHTTPServer((host, port), ProofPatchHandler)
-    print(f"ProofPatch API listening on http://{host}:{port}")
+    """Start the local PatchProof HTTP API. It binds to localhost by default."""
+    server = ThreadingHTTPServer((host, port), PatchProofHandler)
+    print(f"PatchProof API listening on http://{host}:{port}")
     server.serve_forever()
 
 
