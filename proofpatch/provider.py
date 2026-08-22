@@ -35,15 +35,18 @@ class ProviderBackend:
         self._request_key: tuple[str, str] | None = None
 
     def _complete(self, task: str, context: RepositoryContext) -> AgentResponse:
-        key = (task, context.commitment)
+        # RepositoryContext is deliberately lightweight and does not expose a
+        # commitment field. Its stable dataclass representation is sufficient
+        # to cache the edit/claim response for the same verification attempt.
+        key = (task, repr(context))
         if self._request_key != key:
             self._response = self.provider.complete(AgentRequest(task, context))
             self._request_key = key
+        assert self._response is not None
         return self._response
 
     def propose_edits(self, task: str, repo: Path, context: RepositoryContext, previous=None) -> Sequence[FileEdit]:
-        response = self._complete(task, context)
-        return response.edits
+        return self._complete(task, context).edits
 
     def claims(self, task: str, repo: Path, context: RepositoryContext) -> Sequence[Claim]:
         response = self._complete(task, context)
