@@ -6,14 +6,6 @@ from proofpatch.models import Claim
 from proofpatch.pipeline import verify_repository
 
 
-class SourceBackend:
-    def propose_edits(self, task, repo, context, previous):
-        return (FileEdit("generated.py", "VALUE = 42\n"),)
-
-    def claims(self, task, repo, context):
-        return (Claim("claim", "ALL_TESTS_PASS", "all tests pass"),)
-
-
 class MismatchedBackend:
     def propose_edits(self, task, repo, context, previous):
         return (FileEdit("generated.py", "VALUE = 42\n"),)
@@ -33,12 +25,12 @@ def _repo(tmp_path: Path) -> Path:
 def test_proposed_patch_must_match_actual_file_content(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     backend = MismatchedBackend()
-    original_apply = __import__("proofpatch.agent_test_loop", fromlist=["_apply_edits"])._apply_edits
+    import proofpatch.agent_test_loop as loop
+    original_apply = loop._apply_edits
 
     def apply_mismatched(repo, edits):
         (repo / "generated.py").write_text("VALUE = 43\n")
 
-    import proofpatch.agent_test_loop as loop
     loop._apply_edits = apply_mismatched
     try:
         run = run_test_loop(backend, "fix generated", root, max_attempts=1)
@@ -54,13 +46,9 @@ def test_proposed_patch_must_match_actual_file_content(tmp_path: Path) -> None:
 def test_evidence_commitment_detects_tampering(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     (root / "generated.py").write_text("VALUE = 42\n")
-    report = verify_repository(
-        root,
-        (Claim("claim", "ALL_TESTS_PASS", "all tests pass"),),
-        test_command=("pytest", "-q"),
-    )
-    original = report.commitment
+    report = verify_repository(root, (Claim("claim", "ALL_TESTS_PASS", "all tests pass"),), test_command=("pytest", "-q"))
     evidence = list(report.evidence)
     evidence[0] = type(evidence[0])(evidence[0].kind, evidence[0].source, {"tampered": True}, evidence[0].metadata)
-    tampered = type(report)(report.claims, tuple(evidence), original)
-    assert tampered.commitment != original
+    tampered = type(report)(report.claims, tuple(evidence), report.commitment)
+    assert report.commitment_valid() is True
+    assert tampered.commitment_valid() is False
