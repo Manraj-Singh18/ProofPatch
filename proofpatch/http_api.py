@@ -19,7 +19,10 @@ class ProofPatchHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            return
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -53,8 +56,8 @@ class ProofPatchHandler(BaseHTTPRequestHandler):
             if job is None:
                 self._json(404, {"error": "job not found"})
                 return
-            self.service.run(job.id)
-            self._json(200, self.service.as_dict(job.id) or {})
+            self.service.start(job.id)
+            self._json(202, self.service.as_dict(job.id) or {})
             return
         self._json(404, {"error": "not found"})
 
