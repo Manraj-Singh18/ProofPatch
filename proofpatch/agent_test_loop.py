@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Protocol, Sequence
 
 from .commitment import evidence_commitment
-from .edit_loop import EditLoopError, FileEdit, _apply_edits
+from .edit_loop import EditLoopError, FileEdit, _apply_edits, _is_test_path
+from .evidence_ledger import build_ledger, file_hashes, patch_hash
 from .models import Claim, ClaimStatus, EvidenceItem, VerificationResult
 from .pipeline import VerificationReport, verify_repository
 from .repository_context import RepositoryContext, build_repository_context
@@ -35,24 +36,43 @@ def _rejected_edit_report(error: EditLoopError) -> VerificationReport:
     return VerificationReport(claims=(result,), evidence=(evidence,), commitment=evidence_commitment(package))
 
 
+def _with_ledger(report: VerificationReport, ledger: Sequence[EvidenceItem]) -> VerificationReport:
+    evidence = tuple(report.evidence) + tuple(ledger)
+    claims = [
+        {"claim_id": r.claim.claim_id, "claim_type": r.claim.claim_type, "assertion": r.claim.assertion, "files": r.claim.files, "status": r.status.value, "reason": r.reason}
+        for r in report.claims
+    ]
+    commitment = evidence_commitment({"claims": claims, "evidence": [{"kind": e.kind, "source": e.source, "value": e.value} for e in evidence]})
+    return VerificationReport(claims=report.claims, evidence=evidence, commitment=commitment)
+
+
 def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", test_command: Sequence[str] = ("pytest", "-q"), max_attempts: int = 3) -> TestLoopRun:
     """Iterate on bounded edits until verification succeeds or attempts are exhausted."""
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
-
     root = Path(repo).resolve()
     previous = None
     for attempt in range(1, max_attempts + 1):
         context = build_repository_context(root)
+        tracked_paths = context.files
+        before = file_hashes(root, tracked_paths)
         edits = tuple(backend.propose_edits(task, root, context, previous))
         try:
             _apply_edits(root, edits)
         except EditLoopError as exc:
             return TestLoopRun(task, attempt, _rejected_edit_report(exc))
+        after = file_hashes(root, tracked_paths)
+        changed_paths = [edit.path for edit in edits]
+        protected_before = {path: value for path, value in before.items() if _is_test_path(path)}
+        protected_after = {path: value for path, value in after.items() if _is_test_path(path)}
+        expected_after = {edit.path: __import__("hashlib").sha256(edit.content.encode("utf-8")).hexdigest() for edit in edits}
+        ledger = build_ledger(root, edits, before, after, getattr(backend, "raw_response", None)) + (
+            EvidenceItem(kind="patch-application", source="proofpatch", value={"patch_sha256": patch_hash(edits), "expected_after": expected_after, "actual_after": {p: after.get(p) for p in changed_paths}, "applied_matches_proposal": all(after.get(p) == h for p, h in expected_after.items())}),
+            EvidenceItem(kind="protected-files", source="sha256", value={"before": protected_before, "after": protected_after, "unchanged": protected_before == protected_after}),
+        )
         post_context = build_repository_context(root)
         claims = tuple(backend.claims(task, root, post_context))
-        previous = verify_repository(root, claims, test_command=test_command)
+        previous = _with_ledger(verify_repository(root, claims, test_command=test_command), ledger)
         if previous.verified:
             return TestLoopRun(task, attempt, previous)
-
     return TestLoopRun(task, max_attempts, previous)
