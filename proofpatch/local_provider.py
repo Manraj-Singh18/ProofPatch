@@ -6,7 +6,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from .edit_loop import FileEdit, _is_test_path
+from .edit_loop import FileEdit, _is_protected_path, _is_test_path
 from .models import Claim
 from .provider import AgentRequest, AgentResponse
 
@@ -39,7 +39,10 @@ class LocalModelProvider:
         used = 0
         base = Path(root)
         for relative in files:
-            if _is_test_path(relative) or not relative.endswith(_SOURCE_EXTENSIONS):
+            # Do not spend the context budget on virtualenv/toolchain code. Those
+            # files sort before the project's source files and previously consumed
+            # the entire 12k budget before calculator.py was ever presented to the model.
+            if _is_protected_path(relative) or not relative.endswith(_SOURCE_EXTENSIONS):
                 continue
             path = base / relative
             if not path.is_file():
@@ -62,7 +65,9 @@ class LocalModelProvider:
         used = 0
         base = Path(root)
         for relative in files:
-            if not _is_test_path(relative):
+            # Skip tests shipped inside runtime/toolchain directories such as
+            # .venv. Only the project's actual tests should consume the budget.
+            if _is_protected_path(relative) or not _is_test_path(relative):
                 continue
             path = base / relative
             if not path.is_file():
