@@ -67,14 +67,12 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
         paths_to_hash = tuple(sorted(tracked_paths | set(normalized_edit_paths)))
         before = file_hashes(root, paths_to_hash)
         try:
-            _apply_edits(root, edits)
+            _apply_edits(root, edits, baseline_paths=tracked_paths)
         except EditLoopError as exc:
             return TestLoopRun(task, attempt, _rejected_edit_report(exc))
         after = file_hashes(root, paths_to_hash)
         changed_paths = list(normalized_edit_paths)
 
-        # Only test files that existed in the baseline are protected.
-        # Newly-created regression tests are allowed.
         protected_paths = {
             path for path in before
             if _is_test_path(path)
