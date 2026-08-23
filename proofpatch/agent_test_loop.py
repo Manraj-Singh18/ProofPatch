@@ -71,8 +71,22 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
             return TestLoopRun(task, attempt, _rejected_edit_report(exc))
         after = file_hashes(root, paths_to_hash)
         changed_paths = [edit.path for edit in edits]
-        protected_before = {path: value for path, value in before.items() if _is_test_path(path)}
-        protected_after = {path: value for path, value in after.items() if _is_test_path(path)}
+
+        # Only test files that existed in the baseline are protected.
+        # Newly-created regression tests are allowed.
+        protected_paths = {
+            path for path in before
+            if _is_test_path(path)
+        }
+        protected_before = {
+            path: before[path]
+            for path in protected_paths
+        }
+        protected_after = {
+            path: after.get(path)
+            for path in protected_paths
+        }
+
         expected_after = {edit.path: hashlib.sha256(edit.content.encode("utf-8")).hexdigest() for edit in edits}
         actual_after = {p: after.get(p) for p in changed_paths}
         applied_matches_proposal = all(actual_after.get(p) == h for p, h in expected_after.items())
