@@ -55,9 +55,8 @@ def _mismatch_report(task: str, attempt: int, report: VerificationReport, ledger
 
 
 def _baseline_paths(context: RepositoryContext) -> set[str]:
-    """Use Git HEAD files for the actual Git root; otherwise snapshot the fixture filesystem."""
-    source = context.baseline_files if context.is_git_root else context.files
-    return {_normalized_path(path) for path in source}
+    """Snapshot every repository file present at the start of the run."""
+    return {_normalized_path(path) for path in context.files}
 
 
 def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", test_command: Sequence[str] = ("pytest", "-q"), max_attempts: int = 3) -> TestLoopRun:
@@ -78,12 +77,7 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
         paths_to_hash = tuple(sorted(tracked_paths | set(normalized_edit_paths)))
         before = file_hashes(root, paths_to_hash)
         try:
-            try:
-                _apply_edits(root, edits, baseline_paths=baseline_paths)
-            except TypeError as exc:
-                if "baseline_paths" not in str(exc):
-                    raise
-                _apply_edits(root, edits)
+            _apply_edits(root, edits, baseline_paths=baseline_paths)
         except EditLoopError as exc:
             return TestLoopRun(task, attempt, _rejected_edit_report(exc))
         after = file_hashes(root, paths_to_hash)
