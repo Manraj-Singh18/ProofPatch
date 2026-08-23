@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence
+import subprocess
 
 from .models import Claim
 from .pipeline import VerificationReport, verify_repository
@@ -83,6 +84,30 @@ def _protected_path_reason(path: str) -> str:
     return f"agent edits may not modify test files: {path}"
 
 
+def _git_tracked_paths(repo: Path) -> set[str]:
+    """Return paths present in the repository's Git baseline.
+
+    The filesystem may contain untracked files left by a previous failed
+    verification run. Those files are not part of the baseline and must not
+    become protected merely because they happen to exist on disk.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return set()
+
+    return {
+        _normalized_path(path.decode("utf-8"))
+        for path in result.stdout.split(b"\0")
+        if path
+    }
+
+
 def _apply_edits(
     repo: Path,
     edits: Sequence[FileEdit],
@@ -92,14 +117,16 @@ def _apply_edits(
     Apply bounded agent edits.
 
     Runtime/toolchain directories are always protected. Test files that
-    existed in the baseline are immutable. A newly-created regression test
-    is allowed, even if a stale file with the same name was left by an
+    existed in the Git baseline are immutable. A newly-created regression
+    test is allowed, even if a stale file with the same name was left by an
     earlier failed demo run.
     """
     root = repo.resolve()
+    if baseline_paths is None:
+        baseline_paths = _git_tracked_paths(root)
     baseline_paths = {
         _normalized_path(path)
-        for path in (baseline_paths or set())
+        for path in baseline_paths
     }
 
     for edit in edits:
@@ -120,7 +147,7 @@ def _apply_edits(
             raise EditLoopError(_protected_path_reason(edit.path))
 
         # Protect only test files that were present in the baseline.
-        # This allows a new regression test to be created by the agent.
+        # Untracked files left by previous runs are not baseline evidence.
         if normalized in baseline_paths and _is_test_path(normalized):
             raise EditLoopError(_protected_path_reason(edit.path))
 
@@ -133,7 +160,7 @@ def run_edit_loop(backend: EditBackend, task: str, repo: str | Path = ".", test_
     root = Path(repo).resolve()
     context = build_repository_context(root)
     edits = tuple(backend.propose_edits(task, root, context))
-    _apply_edits(root, edits, baseline_paths=set(context.files))
+    _apply_edits(root, edits, baseline_paths=_git_tracked_paths(root))
     post_context = build_repository_context(root)
     claims = tuple(backend.claims(task, root, post_context))
     verification = verify_repository(root, claims, test_command=test_command)
