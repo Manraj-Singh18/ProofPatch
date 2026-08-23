@@ -55,11 +55,9 @@ def _mismatch_report(task: str, attempt: int, report: VerificationReport, ledger
 
 
 def _baseline_paths(context: RepositoryContext) -> set[str]:
-    """Use Git HEAD files for real repos; filesystem snapshot for temporary fixtures."""
-    return {
-        _normalized_path(path)
-        for path in (context.baseline_files or context.files)
-    }
+    """Use Git HEAD files for the actual Git root; otherwise snapshot the fixture filesystem."""
+    source = context.baseline_files if context.is_git_root else context.files
+    return {_normalized_path(path) for path in source}
 
 
 def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", test_command: Sequence[str] = ("pytest", "-q"), max_attempts: int = 3) -> TestLoopRun:
@@ -88,19 +86,9 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
         after = file_hashes(root, paths_to_hash)
         changed_paths = list(normalized_edit_paths)
 
-        protected_paths = {
-            path for path in baseline_paths
-            if _is_test_path(path)
-        }
-        protected_before = {
-            path: before[path]
-            for path in protected_paths
-            if path in before
-        }
-        protected_after = {
-            path: after.get(path)
-            for path in protected_paths
-        }
+        protected_paths = {path for path in baseline_paths if _is_test_path(path)}
+        protected_before = {path: before[path] for path in protected_paths if path in before}
+        protected_after = {path: after.get(path) for path in protected_paths}
 
         expected_after = {
             normalized_path: hashlib.sha256(edit.content.encode("utf-8")).hexdigest()
