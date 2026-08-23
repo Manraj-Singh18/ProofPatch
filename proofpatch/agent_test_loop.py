@@ -6,7 +6,14 @@ from typing import Protocol, Sequence
 import hashlib
 
 from .commitment import evidence_commitment
-from .edit_loop import EditLoopError, FileEdit, _apply_edits, _is_test_path, _normalized_path
+from .edit_loop import (
+    EditLoopError,
+    FileEdit,
+    _apply_edits,
+    _git_tracked_paths,
+    _is_test_path,
+    _normalized_path,
+)
 from .evidence_ledger import build_ledger, file_hashes, patch_hash
 from .models import Claim, ClaimStatus, EvidenceItem, VerificationResult
 from .pipeline import VerificationReport, verify_repository
@@ -61,6 +68,9 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
     previous = None
     for attempt in range(1, max_attempts + 1):
         context = build_repository_context(root)
+        baseline_paths = _git_tracked_paths(root)
+        # Keep the repository snapshot broad enough to observe pre-existing
+        # untracked residue, but use Git's tracked set for edit-policy baseline.
         tracked_paths = set(context.files)
         edits = tuple(backend.propose_edits(task, root, context, previous))
         normalized_edit_paths = tuple(_normalized_path(edit.path) for edit in edits)
@@ -68,12 +78,11 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
         before = file_hashes(root, paths_to_hash)
         try:
             try:
-                _apply_edits(root, edits, baseline_paths=tracked_paths)
+                _apply_edits(root, edits, baseline_paths=baseline_paths)
             except TypeError as exc:
                 # Preserve compatibility with tests/integrations that monkeypatch
                 # the historical two-argument _apply_edits hook. Only fall back
-                # when the callable does not accept baseline_paths; do not hide
-                # TypeErrors raised by the implementation itself.
+                # when the callable does not accept baseline_paths.
                 if "baseline_paths" not in str(exc):
                     raise
                 _apply_edits(root, edits)
@@ -83,12 +92,13 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
         changed_paths = list(normalized_edit_paths)
 
         protected_paths = {
-            path for path in before
+            path for path in baseline_paths
             if _is_test_path(path)
         }
         protected_before = {
             path: before[path]
             for path in protected_paths
+            if path in before
         }
         protected_after = {
             path: after.get(path)
