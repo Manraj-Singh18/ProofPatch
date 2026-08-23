@@ -80,21 +80,42 @@ def _protected_path_reason(path: str) -> str:
     protected_dir = next((part for part in parts if part in _PROTECTED_DIRECTORIES), None)
     if protected_dir:
         return f"agent edits may not modify protected runtime/toolchain path: {path}"
-    return f"agent edits may not modify test files: {path}"
+    return f"agent edits may not modify existing test file: {path}"
 
 
 def _apply_edits(repo: Path, edits: Sequence[FileEdit]) -> None:
+    """
+    Apply bounded agent edits.
+
+    Existing verification tests are immutable, but an agent may create
+    a new regression/security test. Runtime/toolchain directories remain
+    completely protected.
+    """
     root = repo.resolve()
+
     for edit in edits:
-        if _is_protected_path(edit.path):
-            raise EditLoopError(_protected_path_reason(edit.path))
-        target = (root / edit.path).resolve()
+        normalized = _normalized_path(edit.path)
+        if not normalized:
+            raise EditLoopError("edit path cannot be empty")
+
+        target = (root / normalized).resolve()
+
         if root != target and root not in target.parents:
             raise EditLoopError(f"edit escapes repository: {edit.path}")
+
         if target == root:
             raise EditLoopError("cannot replace repository root")
+
+        parts = normalized.split("/") if normalized else ()
+        if any(part in _PROTECTED_DIRECTORIES for part in parts):
+            raise EditLoopError(_protected_path_reason(edit.path))
+
+        # Existing tests are immutable. New regression tests are allowed.
+        if target.exists() and _is_test_path(normalized):
+            raise EditLoopError(_protected_path_reason(edit.path))
+
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(edit.content)
+        target.write_text(edit.content, encoding="utf-8")
 
 
 def run_edit_loop(backend: EditBackend, task: str, repo: str | Path = ".", test_command: Sequence[str] = ("pytest", "-q")) -> EditRun:
