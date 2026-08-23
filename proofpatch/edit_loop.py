@@ -83,15 +83,24 @@ def _protected_path_reason(path: str) -> str:
     return f"agent edits may not modify test files: {path}"
 
 
-def _apply_edits(repo: Path, edits: Sequence[FileEdit]) -> None:
+def _apply_edits(
+    repo: Path,
+    edits: Sequence[FileEdit],
+    baseline_paths: set[str] | None = None,
+) -> None:
     """
     Apply bounded agent edits.
 
-    Existing verification tests are immutable, but an agent may create
-    a new regression/security test. Runtime/toolchain directories remain
-    completely protected.
+    Runtime/toolchain directories are always protected. Test files that
+    existed in the baseline are immutable. A newly-created regression test
+    is allowed, even if a stale file with the same name was left by an
+    earlier failed demo run.
     """
     root = repo.resolve()
+    baseline_paths = {
+        _normalized_path(path)
+        for path in (baseline_paths or set())
+    }
 
     for edit in edits:
         normalized = _normalized_path(edit.path)
@@ -110,8 +119,9 @@ def _apply_edits(repo: Path, edits: Sequence[FileEdit]) -> None:
         if any(part in _PROTECTED_DIRECTORIES for part in parts):
             raise EditLoopError(_protected_path_reason(edit.path))
 
-        # Existing tests are immutable. New regression tests are allowed.
-        if target.exists() and _is_test_path(normalized):
+        # Protect only test files that were present in the baseline.
+        # This allows a new regression test to be created by the agent.
+        if normalized in baseline_paths and _is_test_path(normalized):
             raise EditLoopError(_protected_path_reason(edit.path))
 
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -123,7 +133,7 @@ def run_edit_loop(backend: EditBackend, task: str, repo: str | Path = ".", test_
     root = Path(repo).resolve()
     context = build_repository_context(root)
     edits = tuple(backend.propose_edits(task, root, context))
-    _apply_edits(root, edits)
+    _apply_edits(root, edits, baseline_paths=set(context.files))
     post_context = build_repository_context(root)
     claims = tuple(backend.claims(task, root, post_context))
     verification = verify_repository(root, claims, test_command=test_command)
