@@ -65,10 +65,13 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
         raise ValueError("max_attempts must be at least 1")
     root = Path(repo).resolve()
     previous = None
+
+    # Capture the security baseline once, before any agent attempt can modify files.
+    initial_context = build_repository_context(root)
+    baseline_paths = _baseline_paths(initial_context)
+
     for attempt in range(1, max_attempts + 1):
         context = build_repository_context(root)
-        baseline_paths = _baseline_paths(context)
-
         tracked_paths = set(context.files)
         edits = tuple(backend.propose_edits(task, root, context, previous))
         normalized_edit_paths = tuple(_normalized_path(edit.path) for edit in edits)
