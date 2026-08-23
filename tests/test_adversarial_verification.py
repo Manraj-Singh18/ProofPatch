@@ -32,6 +32,14 @@ class RuntimeEditBackend:
         return (Claim("claim", "ALL_TESTS_PASS", "all tests pass"),)
 
 
+class NewRegressionTestBackend:
+    def propose_edits(self, task, repo, context, previous):
+        return (FileEdit("tests/test_generated_regression.py", "def test_generated_regression():\n    assert True\n"),)
+
+    def claims(self, task, repo, context):
+        return (Claim("claim", "ALL_TESTS_PASS", "all tests pass"),)
+
+
 def _repo(tmp_path: Path) -> Path:
     (tmp_path / "generated.py").write_text("VALUE = 1\n")
     (tmp_path / "test_generated.py").write_text(
@@ -44,6 +52,13 @@ def test_modifying_test_is_rejected(tmp_path: Path) -> None:
     run = run_test_loop(TestEditBackend(), "fix generated", _repo(tmp_path), max_attempts=1)
     assert run.accepted is False
     assert "test files" in run.verification.claims[0].reason.lower()
+
+
+def test_new_regression_test_is_allowed(tmp_path: Path) -> None:
+    root = tmp_path
+    (root / "generated.py").write_text("VALUE = 1\n")
+    run = run_test_loop(NewRegressionTestBackend(), "add regression test", root, max_attempts=1)
+    assert (root / "tests" / "test_generated_regression.py").exists()
 
 
 def test_failing_tests_override_model_claim(tmp_path: Path) -> None:
