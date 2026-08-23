@@ -85,13 +85,18 @@ def _protected_path_reason(path: str) -> str:
 
 
 def _git_tracked_paths(repo: Path) -> set[str]:
-    """Return paths present in the repository's Git baseline.
-
-    The filesystem may contain untracked files left by a previous failed
-    verification run. Those files are not part of the baseline and must not
-    become protected merely because they happen to exist on disk.
-    """
+    """Return paths tracked by the Git repository rooted at repo, if any."""
     try:
+        root_result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        git_root = Path(root_result.stdout.strip()).resolve()
+        if git_root != repo.resolve():
+            return set()
         result = subprocess.run(
             ["git", "ls-files", "-z"],
             cwd=repo,
@@ -113,21 +118,17 @@ def _apply_edits(
     edits: Sequence[FileEdit],
     baseline_paths: set[str] | None = None,
 ) -> None:
-    """
-    Apply bounded agent edits.
+    """Apply bounded edits while protecting existing tests and runtime paths.
 
-    Runtime/toolchain directories are always protected. Test files that
-    existed in the Git baseline are immutable. A newly-created regression
-    test is allowed, even if a stale file with the same name was left by an
-    earlier failed demo run.
+    A test may be created by an agent, but an existing test may never be
+    replaced. This intentionally uses the state at the start of the edit as
+    the security boundary, so a stale untracked file is still protected if it
+    exists when verification begins.
     """
     root = repo.resolve()
     if baseline_paths is None:
         baseline_paths = _git_tracked_paths(root)
-    baseline_paths = {
-        _normalized_path(path)
-        for path in baseline_paths
-    }
+    baseline_paths = {_normalized_path(path) for path in baseline_paths}
 
     for edit in edits:
         normalized = _normalized_path(edit.path)
@@ -146,9 +147,9 @@ def _apply_edits(
         if any(part in _PROTECTED_DIRECTORIES for part in parts):
             raise EditLoopError(_protected_path_reason(edit.path))
 
-        # Protect only test files that were present in the baseline.
-        # Untracked files left by previous runs are not baseline evidence.
-        if normalized in baseline_paths and _is_test_path(normalized):
+        # Any test that already exists at the start of the edit is immutable.
+        # A test path that does not exist may be created as a new regression test.
+        if _is_test_path(normalized) and (normalized in baseline_paths or target.exists()):
             raise EditLoopError(_protected_path_reason(edit.path))
 
         target.parent.mkdir(parents=True, exist_ok=True)
