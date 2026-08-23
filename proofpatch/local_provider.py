@@ -18,6 +18,17 @@ _PLACEHOLDER_PATHS = {
     "path/to/file",
     "path/to/file.py",
 }
+_PROTECTED_DIRECTORIES = {
+    ".git",
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "node_modules",
+}
 
 
 class LocalModelError(RuntimeError):
@@ -60,14 +71,16 @@ class LocalModelProvider:
 
     @staticmethod
     def _test_context(root: str, files: tuple[str, ...], limit: int = 8000) -> dict[str, str]:
-        """Read tests as immutable requirements; the model may inspect them but never edit them."""
+        """Read project tests as immutable requirements; the model may inspect them but never edit existing tests."""
         result: dict[str, str] = {}
         used = 0
         base = Path(root)
         for relative in files:
-            # Skip tests shipped inside runtime/toolchain directories such as
-            # .venv. Only the project's actual tests should consume the budget.
-            if _is_protected_path(relative) or not _is_test_path(relative):
+            normalized = relative.replace("\\", "/").strip("/")
+            parts = normalized.split("/") if normalized else ()
+            if any(part in _PROTECTED_DIRECTORIES for part in parts):
+                continue
+            if not _is_test_path(normalized):
                 continue
             path = base / relative
             if not path.is_file():
@@ -121,12 +134,16 @@ class LocalModelProvider:
                 )
             if path in source_paths:
                 continue
+            if _is_test_path(path):
+                # New regression/security tests are valid proposals. The edit loop
+                # independently rejects attempts to modify an existing test file.
+                continue
             if path.endswith(_SOURCE_EXTENSIONS):
                 # New source files are allowed, but they must use a real source-file path.
                 continue
             raise LocalModelError(
                 f"local model returned an ungrounded edit path: {edit.path!r}; "
-                "choose an existing source file or a new source file with a supported extension"
+                "choose an existing source file, a new source file, or a new regression test"
             )
 
     def complete(self, request: AgentRequest) -> AgentResponse:
@@ -163,13 +180,15 @@ class LocalModelProvider:
                         "The task must be completed by changing source code when the current source does not satisfy it. "
                         "If the task describes a failing test or requested bug fix, an empty edits array is NOT a valid solution "
                         "unless the supplied source already satisfies the task. Inspect the supplied source and read-only test "
-                        "contents to determine the smallest required source change. Never modify any test file, test_*.py file, "
-                        "file under a tests/ directory, or runtime/toolchain directory such as .venv, .git, __pycache__, "
-                        ".pytest_cache, node_modules, or similar. Make the smallest source-only change needed. "
-                        "Use the supplied source and tests as ground truth. Return complete contents for every changed file. "
-                        "IMPORTANT: choose edit paths ONLY from the named files in repository.source, unless you are creating "
-                        "a genuinely new source file. Do not copy placeholder/example paths such as path/to/your/file. "
-                        "Do not use markdown fences or explanations."
+                        "contents to determine the smallest required source change. Never modify an existing test file or an "
+                        "existing test_*.py file. You MAY CREATE a new regression/security test when the task requires one. "
+                        "Never modify a file under a tests/ directory that already exists. Never modify runtime/toolchain "
+                        "directories such as .venv, .git, __pycache__, .pytest_cache, node_modules, or similar. Make the smallest "
+                        "source-only change plus any genuinely new regression test needed. Use the supplied source and tests as "
+                        "ground truth. Return complete contents for every changed or newly created file. IMPORTANT: choose edit "
+                        "paths ONLY from the named files in repository.source, unless you are creating a genuinely new source or "
+                        "regression test file. Do not copy placeholder/example paths such as path/to/your/file. Do not use markdown "
+                        "fences or explanations."
                     ),
                 },
                 {
