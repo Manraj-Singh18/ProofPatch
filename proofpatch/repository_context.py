@@ -23,6 +23,17 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout
 
 
+def _git_baseline_files(repo: Path) -> tuple[str, ...]:
+    try:
+        return tuple(
+            line
+            for line in _git(repo, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+            if line
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return ()
+
+
 def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 12000) -> RepositoryContext:
     """Build a stable repository summary without exposing arbitrary file contents."""
     root = Path(repo).resolve()
@@ -46,11 +57,7 @@ def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 120
         files.append(path.relative_to(root).as_posix())
     files.sort()
 
-    baseline_files = tuple(
-        line
-        for line in _git(root, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
-        if line
-    )
+    baseline_files = _git_baseline_files(root)
 
     readme_path = next(
         (
