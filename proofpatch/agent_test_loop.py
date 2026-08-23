@@ -55,9 +55,8 @@ def _mismatch_report(task: str, attempt: int, report: VerificationReport, ledger
 
 
 def _baseline_paths(context: RepositoryContext) -> set[str]:
-    """Use Git HEAD files for the actual Git root; otherwise snapshot the fixture filesystem."""
-    source = context.baseline_files if context.is_git_root else context.files
-    return {_normalized_path(path) for path in source}
+    """Snapshot every repository file present at the start of the run."""
+    return {_normalized_path(path) for path in context.files}
 
 
 def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", test_command: Sequence[str] = ("pytest", "-q"), max_attempts: int = 3) -> TestLoopRun:
@@ -65,10 +64,13 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
         raise ValueError("max_attempts must be at least 1")
     root = Path(repo).resolve()
     previous = None
+
+    # Capture the security baseline once, before any agent attempt can modify files.
+    initial_context = build_repository_context(root)
+    baseline_paths = _baseline_paths(initial_context)
+
     for attempt in range(1, max_attempts + 1):
         context = build_repository_context(root)
-        baseline_paths = _baseline_paths(context)
-
         tracked_paths = set(context.files)
         edits = tuple(backend.propose_edits(task, root, context, previous))
         normalized_edit_paths = tuple(_normalized_path(edit.path) for edit in edits)

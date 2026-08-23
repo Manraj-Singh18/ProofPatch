@@ -120,10 +120,9 @@ def _apply_edits(
 ) -> None:
     """Apply bounded edits while protecting existing tests and runtime paths.
 
-    A test may be created by an agent, but an existing test may never be
-    replaced. This intentionally uses the state at the start of the edit as
-    the security boundary, so a stale untracked file is still protected if it
-    exists when verification begins.
+    A test may be created by an agent, but a test present in the captured
+    baseline may never be replaced. Baseline membership is the security
+    boundary; current filesystem existence alone is not.
     """
     root = repo.resolve()
     if baseline_paths is None:
@@ -147,9 +146,9 @@ def _apply_edits(
         if any(part in _PROTECTED_DIRECTORIES for part in parts):
             raise EditLoopError(_protected_path_reason(edit.path))
 
-        # Any test that already exists at the start of the edit is immutable.
-        # A test path that does not exist may be created as a new regression test.
-        if _is_test_path(normalized) and (normalized in baseline_paths or target.exists()):
+        # Any test present in the captured baseline is immutable.
+        # A test absent from the baseline may be created as a new regression test.
+        if _is_test_path(normalized) and normalized in baseline_paths:
             raise EditLoopError(_protected_path_reason(edit.path))
 
         target.parent.mkdir(parents=True, exist_ok=True)
