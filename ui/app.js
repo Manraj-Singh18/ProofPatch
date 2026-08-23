@@ -64,12 +64,14 @@ function render(job) {
   html += '</div>';
 
   if (anchor) {
+    var anchorFailed = anchor.status === 'failed' || !anchor.transaction_hash;
     html += '<div class="anchor"><h4>Ethereum proof anchor</h4><p>This transaction records the SHA-256 commitment of this proof package on Ethereum. The blockchain is a timestamped notary here; it does not decide whether the code is correct.</p>';
-    if (anchor.transaction_hash) {
+    if (!anchorFailed) {
+      html += '<p><b>Confirmed on ' + esc(anchor.network || 'Ethereum') + '</b>' + (anchor.block_number != null ? ' in block ' + esc(anchor.block_number) : '') + '.</p>';
       html += '<code>' + esc(anchor.transaction_hash) + '</code>';
       if (anchor.explorer_url) html += '<a href="' + esc(anchor.explorer_url) + '" target="_blank" rel="noreferrer">View transaction ↗</a>';
     } else {
-      html += '<p>' + esc(anchor.error || 'Anchoring failed') + '</p>';
+      html += '<p>Anchoring failed: ' + esc(anchor.error || 'unknown Ethereum error') + '</p>';
     }
     html += '</div>';
   } else {
