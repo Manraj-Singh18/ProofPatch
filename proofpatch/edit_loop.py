@@ -71,6 +71,9 @@ def _is_protected_path(path: str) -> bool:
     parts = normalized.split("/") if normalized else ()
     if any(part in _PROTECTED_DIRECTORIES for part in parts):
         return True
+
+    # Existing test files are protected. New test files are allowed by
+    # _apply_edits(), which checks target.exists() before rejecting.
     return _is_test_path(normalized)
 
 
