@@ -25,6 +25,7 @@ class AnchorResult:
     contract: str
     transaction_hash: str
     explorer_url: str | None = None
+    block_number: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -32,6 +33,7 @@ class AnchorResult:
             "contract": self.contract,
             "transaction_hash": self.transaction_hash,
             "explorer_url": self.explorer_url,
+            "block_number": self.block_number,
         }
 
 
@@ -55,6 +57,10 @@ def anchor_proof(commitment: str, accepted: bool) -> AnchorResult:
     if not anchor_configured():
         raise RuntimeError("Ethereum anchoring is not configured")
 
+    evidence_hash = bytes.fromhex(commitment.removeprefix("0x"))
+    if len(evidence_hash) != 32:
+        raise ValueError("Proof commitment must be a 32-byte SHA-256 hex value")
+
     try:
         from web3 import Web3
     except ImportError as exc:  # pragma: no cover - exercised only when configured
@@ -72,9 +78,6 @@ def anchor_proof(commitment: str, accepted: bool) -> AnchorResult:
 
     account = w3.eth.account.from_key(private_key)
     contract = w3.eth.contract(address=Web3.to_checksum_address(contract_address), abi=ABI)
-    evidence_hash = bytes.fromhex(commitment.removeprefix("0x"))
-    if len(evidence_hash) != 32:
-        raise ValueError("Proof commitment must be a 32-byte SHA-256 hex value")
 
     nonce = w3.eth.get_transaction_count(account.address, "pending")
     chain_id = w3.eth.chain_id
@@ -90,6 +93,19 @@ def anchor_proof(commitment: str, accepted: bool) -> AnchorResult:
     )
     signed = account.sign_transaction(tx)
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    receipt = w3.eth.wait_for_transaction_receipt(
+        tx_hash,
+        timeout=int(os.getenv("PATCHPROOF_ETH_RECEIPT_TIMEOUT", "120")),
+    )
+    if receipt.status != 1:
+        raise RuntimeError(f"Ethereum anchor transaction reverted: {w3.to_hex(tx_hash)}")
+
     tx_hex = w3.to_hex(tx_hash)
     explorer_url = f"{explorer_base}/tx/{tx_hex}" if explorer_base else None
-    return AnchorResult(network=network, contract=contract_address, transaction_hash=tx_hex, explorer_url=explorer_url)
+    return AnchorResult(
+        network=network,
+        contract=contract_address,
+        transaction_hash=tx_hex,
+        explorer_url=explorer_url,
+        block_number=receipt.blockNumber,
+    )
