@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
@@ -13,9 +11,9 @@ class RepositoryContext:
     head: str
     branch: str | None
     files: tuple[str, ...]
-    baseline_files: tuple[str, ...]
     status: tuple[str, ...]
     readme: str
+    baseline_files: tuple[str, ...] = ()
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -23,12 +21,6 @@ def _git(repo: Path, *args: str) -> str:
         ["git", *args], cwd=repo, check=True, capture_output=True, text=True
     )
     return result.stdout
-
-
-def _git_baseline_files(repo: Path) -> tuple[str, ...]:
-    """Return files tracked by the current Git HEAD, excluding submodule git metadata."""
-    output = _git(repo, "ls-tree", "-r", "--name-only", "HEAD")
-    return tuple(sorted(line for line in output.splitlines() if line))
 
 
 def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 12000) -> RepositoryContext:
@@ -54,7 +46,11 @@ def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 120
         files.append(path.relative_to(root).as_posix())
     files.sort()
 
-    baseline_files = _git_baseline_files(root)
+    baseline_files = tuple(
+        line
+        for line in _git(root, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+        if line
+    )
 
     readme_path = next(
         (
@@ -75,7 +71,7 @@ def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 120
         head=head,
         branch=branch,
         files=tuple(files),
-        baseline_files=baseline_files,
         status=tuple(sorted(status)),
         readme=readme,
+        baseline_files=baseline_files,
     )
