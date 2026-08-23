@@ -71,9 +71,6 @@ def _is_protected_path(path: str) -> bool:
     parts = normalized.split("/") if normalized else ()
     if any(part in _PROTECTED_DIRECTORIES for part in parts):
         return True
-
-    # Existing test files are protected. New test files are allowed by
-    # _apply_edits(), which checks target.exists() before rejecting.
     return _is_test_path(normalized)
 
 
@@ -83,7 +80,7 @@ def _protected_path_reason(path: str) -> str:
     protected_dir = next((part for part in parts if part in _PROTECTED_DIRECTORIES), None)
     if protected_dir:
         return f"agent edits may not modify protected runtime/toolchain path: {path}"
-    return f"agent edits may not modify existing test file: {path}"
+    return f"agent edits may not modify test files: {path}"
 
 
 def _apply_edits(repo: Path, edits: Sequence[FileEdit]) -> None:
