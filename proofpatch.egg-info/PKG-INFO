@@ -3,3 +3,5 @@ Name: proofpatch
 Version: 0.1.0
 Summary: Evidence-backed verification for AI coding claims
 Requires-Python: >=3.10
+Provides-Extra: ethereum
+Requires-Dist: web3<8,>=7; extra == "ethereum"
