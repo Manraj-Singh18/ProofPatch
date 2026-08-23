@@ -77,7 +77,12 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
         paths_to_hash = tuple(sorted(tracked_paths | set(normalized_edit_paths)))
         before = file_hashes(root, paths_to_hash)
         try:
-            _apply_edits(root, edits, baseline_paths=baseline_paths)
+            try:
+                _apply_edits(root, edits, baseline_paths=baseline_paths)
+            except TypeError as exc:
+                if "baseline_paths" not in str(exc):
+                    raise
+                _apply_edits(root, edits)
         except EditLoopError as exc:
             return TestLoopRun(task, attempt, _rejected_edit_report(exc))
         after = file_hashes(root, paths_to_hash)
