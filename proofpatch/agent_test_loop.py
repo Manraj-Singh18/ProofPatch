@@ -6,14 +6,7 @@ from typing import Protocol, Sequence
 import hashlib
 
 from .commitment import evidence_commitment
-from .edit_loop import (
-    EditLoopError,
-    FileEdit,
-    _apply_edits,
-    _git_tracked_paths,
-    _is_test_path,
-    _normalized_path,
-)
+from .edit_loop import EditLoopError, FileEdit, _apply_edits, _is_test_path, _normalized_path
 from .evidence_ledger import build_ledger, file_hashes, patch_hash
 from .models import Claim, ClaimStatus, EvidenceItem, VerificationResult
 from .pipeline import VerificationReport, verify_repository
@@ -68,9 +61,15 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
     previous = None
     for attempt in range(1, max_attempts + 1):
         context = build_repository_context(root)
-        baseline_paths = _git_tracked_paths(root)
-        # Keep the repository snapshot broad enough to observe pre-existing
-        # untracked residue, but use Git's tracked set for edit-policy baseline.
+
+        # Git HEAD is the immutable baseline for real repositories. For
+        # non-Git temporary fixtures, the files present at attempt start are
+        # the baseline so existing test files remain protected.
+        baseline_paths = {
+            _normalized_path(path)
+            for path in (context.baseline_files or context.files)
+        }
+
         tracked_paths = set(context.files)
         edits = tuple(backend.propose_edits(task, root, context, previous))
         normalized_edit_paths = tuple(_normalized_path(edit.path) for edit in edits)
@@ -80,14 +79,12 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
             try:
                 _apply_edits(root, edits, baseline_paths=baseline_paths)
             except TypeError as exc:
-                # Preserve compatibility with tests/integrations that monkeypatch
-                # the historical two-argument _apply_edits hook. Only fall back
-                # when the callable does not accept baseline_paths.
                 if "baseline_paths" not in str(exc):
                     raise
                 _apply_edits(root, edits)
         except EditLoopError as exc:
             return TestLoopRun(task, attempt, _rejected_edit_report(exc))
+
         after = file_hashes(root, paths_to_hash)
         changed_paths = list(normalized_edit_paths)
 
@@ -111,7 +108,12 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
         }
         actual_after = {p: after.get(p) for p in changed_paths}
         applied_matches_proposal = all(actual_after.get(p) == h for p, h in expected_after.items())
-        ledger = build_ledger(root, edits, before, after, getattr(backend, "raw_response", None)) + (EvidenceItem(kind="patch-application", source="proofpatch", value={"patch_sha256": patch_hash(edits), "expected_after": expected_after, "actual_after": actual_after, "applied_matches_proposal": applied_matches_proposal, "matches_proposed": applied_matches_proposal}), EvidenceItem(kind="protected-files", source="sha256", value={"before": protected_before, "after": protected_after, "unchanged": protected_before == protected_after}))
+
+        ledger = build_ledger(root, edits, before, after, getattr(backend, "raw_response", None)) + (
+            EvidenceItem(kind="patch-application", source="proofpatch", value={"patch_sha256": patch_hash(edits), "expected_after": expected_after, "actual_after": actual_after, "applied_matches_proposal": applied_matches_proposal, "matches_proposed": applied_matches_proposal}),
+            EvidenceItem(kind="protected-files", source="sha256", value={"before": protected_before, "after": protected_after, "unchanged": protected_before == protected_after}),
+        )
+
         post_context = build_repository_context(root)
         claims = tuple(backend.claims(task, root, post_context))
         previous = _with_ledger(verify_repository(root, claims, test_command=test_command), ledger)
@@ -119,4 +121,5 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
             return _mismatch_report(task, attempt, previous, ledger)
         if previous.verified:
             return TestLoopRun(task, attempt, previous)
+
     return TestLoopRun(task, max_attempts, previous)
