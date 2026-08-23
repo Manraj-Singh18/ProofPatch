@@ -11,5 +11,9 @@ requires-python = ">=3.10"
 [project.optional-dependencies]
 ethereum = ["web3>=7,<8"]
 
+[tool.setuptools.packages.find]
+include = ["proofpatch*"]
+exclude = ["ui*", "contracts*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
