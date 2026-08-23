@@ -13,6 +13,7 @@ class RepositoryContext:
     head: str
     branch: str | None
     files: tuple[str, ...]
+    baseline_files: tuple[str, ...]
     status: tuple[str, ...]
     readme: str
 
@@ -24,12 +25,27 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout
 
 
+def _git_baseline_files(repo: Path) -> tuple[str, ...]:
+    """Return files tracked by the current Git HEAD, excluding submodule git metadata."""
+    output = _git(repo, "ls-tree", "-r", "--name-only", "HEAD")
+    return tuple(sorted(line for line in output.splitlines() if line))
+
+
 def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 12000) -> RepositoryContext:
     """Build a stable repository summary without exposing arbitrary file contents."""
     root = Path(repo).resolve()
     head = _git(root, "rev-parse", "HEAD").strip()
     branch = _git(root, "branch", "--show-current").strip() or None
-    status = tuple(line for line in _git(root, "status", "--porcelain=v1", "--untracked-files=all").splitlines() if line)
+    status = tuple(
+        line
+        for line in _git(
+            root,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        ).splitlines()
+        if line
+    )
 
     files = []
     for path in root.rglob("*"):
@@ -38,14 +54,28 @@ def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 120
         files.append(path.relative_to(root).as_posix())
     files.sort()
 
-    readme_path = next((root / name for name in ("README.md", "README.rst", "README") if (root / name).is_file()), None)
-    readme = readme_path.read_text(errors="replace")[:max_readme_chars] if readme_path else ""
+    baseline_files = _git_baseline_files(root)
+
+    readme_path = next(
+        (
+            root / name
+            for name in ("README.md", "README.rst", "README")
+            if (root / name).is_file()
+        ),
+        None,
+    )
+    readme = (
+        readme_path.read_text(errors="replace")[:max_readme_chars]
+        if readme_path
+        else ""
+    )
 
     return RepositoryContext(
         root=str(root),
         head=head,
         branch=branch,
         files=tuple(files),
+        baseline_files=baseline_files,
         status=tuple(sorted(status)),
         readme=readme,
     )
