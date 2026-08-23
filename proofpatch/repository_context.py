@@ -14,6 +14,7 @@ class RepositoryContext:
     status: tuple[str, ...]
     readme: str
     baseline_files: tuple[str, ...] = ()
+    is_git_root: bool = False
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -35,18 +36,14 @@ def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 120
     """Build a stable repository summary without exposing arbitrary file contents."""
     root = Path(repo).resolve()
     git_root = _git_root(root)
+    is_git_root = git_root == root
 
     if git_root is not None:
         head = _git(root, "rev-parse", "HEAD").strip()
         branch = _git(root, "branch", "--show-current").strip() or None
         status = tuple(
             line
-            for line in _git(
-                root,
-                "status",
-                "--porcelain=v1",
-                "--untracked-files=all",
-            ).splitlines()
+            for line in _git(root, "status", "--porcelain=v1", "--untracked-files=all").splitlines()
             if line
         )
     else:
@@ -62,7 +59,7 @@ def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 120
     files.sort()
 
     baseline_files = ()
-    if git_root == root:
+    if is_git_root:
         baseline_files = tuple(
             line
             for line in _git(root, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
@@ -70,18 +67,10 @@ def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 120
         )
 
     readme_path = next(
-        (
-            root / name
-            for name in ("README.md", "README.rst", "README")
-            if (root / name).is_file()
-        ),
+        (root / name for name in ("README.md", "README.rst", "README") if (root / name).is_file()),
         None,
     )
-    readme = (
-        readme_path.read_text(errors="replace")[:max_readme_chars]
-        if readme_path
-        else ""
-    )
+    readme = readme_path.read_text(errors="replace")[:max_readme_chars] if readme_path else ""
 
     return RepositoryContext(
         root=str(root),
@@ -91,4 +80,5 @@ def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 120
         status=tuple(sorted(status)),
         readme=readme,
         baseline_files=baseline_files,
+        is_git_root=is_git_root,
     )
