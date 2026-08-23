@@ -54,6 +54,13 @@ def _mismatch_report(task: str, attempt: int, report: VerificationReport, ledger
     return TestLoopRun(task, attempt, VerificationReport(claims=claims, evidence=final.evidence, commitment=evidence_commitment(package)))
 
 
+def _baseline_paths(context: RepositoryContext) -> set[str]:
+    """Use Git HEAD files for real repos; filesystem snapshot for temporary fixtures."""
+    if context.baseline_files:
+        return {_normalized_path(path) for path in context.baseline_files}
+    return {_normalized_path(path) for path in context.files}
+
+
 def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", test_command: Sequence[str] = ("pytest", "-q"), max_attempts: int = 3) -> TestLoopRun:
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
@@ -61,15 +68,7 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
     previous = None
     for attempt in range(1, max_attempts + 1):
         context = build_repository_context(root)
-
-        # Git HEAD is the immutable baseline for real repositories. For
-        # non-Git temporary fixtures, the files present at attempt start are
-        # the baseline so existing test files remain protected.
-        baseline_paths = {
-            _normalized_path(path)
-            for path in (context.baseline_files or context.files)
-        }
-
+        baseline_paths = _baseline_paths(context)
         tracked_paths = set(context.files)
         edits = tuple(backend.propose_edits(task, root, context, previous))
         normalized_edit_paths = tuple(_normalized_path(edit.path) for edit in edits)
@@ -84,7 +83,6 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
                 _apply_edits(root, edits)
         except EditLoopError as exc:
             return TestLoopRun(task, attempt, _rejected_edit_report(exc))
-
         after = file_hashes(root, paths_to_hash)
         changed_paths = list(normalized_edit_paths)
 
@@ -121,5 +119,4 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
             return _mismatch_report(task, attempt, previous, ledger)
         if previous.verified:
             return TestLoopRun(task, attempt, previous)
-
     return TestLoopRun(task, max_attempts, previous)
