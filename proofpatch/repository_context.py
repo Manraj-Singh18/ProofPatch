@@ -23,32 +23,36 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout
 
 
-def _git_baseline_files(repo: Path) -> tuple[str, ...]:
+def _git_root(repo: Path) -> Path | None:
+    """Return this repository's Git root, not an ancestor repository."""
     try:
-        return tuple(
-            line
-            for line in _git(repo, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
-            if line
-        )
+        return Path(_git(repo, "rev-parse", "--show-toplevel").strip()).resolve()
     except (OSError, subprocess.CalledProcessError):
-        return ()
+        return None
 
 
 def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 12000) -> RepositoryContext:
     """Build a stable repository summary without exposing arbitrary file contents."""
     root = Path(repo).resolve()
-    head = _git(root, "rev-parse", "HEAD").strip()
-    branch = _git(root, "branch", "--show-current").strip() or None
-    status = tuple(
-        line
-        for line in _git(
-            root,
-            "status",
-            "--porcelain=v1",
-            "--untracked-files=all",
-        ).splitlines()
-        if line
-    )
+    git_root = _git_root(root)
+
+    if git_root is not None:
+        head = _git(root, "rev-parse", "HEAD").strip()
+        branch = _git(root, "branch", "--show-current").strip() or None
+        status = tuple(
+            line
+            for line in _git(
+                root,
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            ).splitlines()
+            if line
+        )
+    else:
+        head = ""
+        branch = None
+        status = ()
 
     files = []
     for path in root.rglob("*"):
@@ -57,7 +61,13 @@ def build_repository_context(repo: str | Path = ".", max_readme_chars: int = 120
         files.append(path.relative_to(root).as_posix())
     files.sort()
 
-    baseline_files = _git_baseline_files(root)
+    baseline_files = ()
+    if git_root == root:
+        baseline_files = tuple(
+            line
+            for line in _git(root, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+            if line
+        )
 
     readme_path = next(
         (
