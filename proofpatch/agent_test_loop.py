@@ -6,7 +6,7 @@ from typing import Protocol, Sequence
 import hashlib
 
 from .commitment import evidence_commitment
-from .edit_loop import EditLoopError, FileEdit, _apply_edits, _is_test_path
+from .edit_loop import EditLoopError, FileEdit, _apply_edits, _is_test_path, _normalized_path
 from .evidence_ledger import build_ledger, file_hashes, patch_hash
 from .models import Claim, ClaimStatus, EvidenceItem, VerificationResult
 from .pipeline import VerificationReport, verify_repository
@@ -63,14 +63,15 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
         context = build_repository_context(root)
         tracked_paths = set(context.files)
         edits = tuple(backend.propose_edits(task, root, context, previous))
-        paths_to_hash = tuple(sorted(tracked_paths | {edit.path for edit in edits}))
+        normalized_edit_paths = tuple(_normalized_path(edit.path) for edit in edits)
+        paths_to_hash = tuple(sorted(tracked_paths | set(normalized_edit_paths)))
         before = file_hashes(root, paths_to_hash)
         try:
             _apply_edits(root, edits)
         except EditLoopError as exc:
             return TestLoopRun(task, attempt, _rejected_edit_report(exc))
         after = file_hashes(root, paths_to_hash)
-        changed_paths = [edit.path for edit in edits]
+        changed_paths = list(normalized_edit_paths)
 
         # Only test files that existed in the baseline are protected.
         # Newly-created regression tests are allowed.
@@ -87,7 +88,10 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
             for path in protected_paths
         }
 
-        expected_after = {edit.path: hashlib.sha256(edit.content.encode("utf-8")).hexdigest() for edit in edits}
+        expected_after = {
+            normalized_path: hashlib.sha256(edit.content.encode("utf-8")).hexdigest()
+            for normalized_path, edit in zip(normalized_edit_paths, edits)
+        }
         actual_after = {p: after.get(p) for p in changed_paths}
         applied_matches_proposal = all(actual_after.get(p) == h for p, h in expected_after.items())
         ledger = build_ledger(root, edits, before, after, getattr(backend, "raw_response", None)) + (EvidenceItem(kind="patch-application", source="proofpatch", value={"patch_sha256": patch_hash(edits), "expected_after": expected_after, "actual_after": actual_after, "applied_matches_proposal": applied_matches_proposal, "matches_proposed": applied_matches_proposal}), EvidenceItem(kind="protected-files", source="sha256", value={"before": protected_before, "after": protected_after, "unchanged": protected_before == protected_after}))
