@@ -56,9 +56,10 @@ def _mismatch_report(task: str, attempt: int, report: VerificationReport, ledger
 
 def _baseline_paths(context: RepositoryContext) -> set[str]:
     """Use Git HEAD files for real repos; filesystem snapshot for temporary fixtures."""
-    if context.baseline_files:
-        return {_normalized_path(path) for path in context.baseline_files}
-    return {_normalized_path(path) for path in context.files}
+    return {
+        _normalized_path(path)
+        for path in (context.baseline_files or context.files)
+    }
 
 
 def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", test_command: Sequence[str] = ("pytest", "-q"), max_attempts: int = 3) -> TestLoopRun:
@@ -69,6 +70,7 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
     for attempt in range(1, max_attempts + 1):
         context = build_repository_context(root)
         baseline_paths = _baseline_paths(context)
+
         tracked_paths = set(context.files)
         edits = tuple(backend.propose_edits(task, root, context, previous))
         normalized_edit_paths = tuple(_normalized_path(edit.path) for edit in edits)
@@ -106,12 +108,10 @@ def run_test_loop(backend: TestLoopBackend, task: str, repo: str | Path = ".", t
         }
         actual_after = {p: after.get(p) for p in changed_paths}
         applied_matches_proposal = all(actual_after.get(p) == h for p, h in expected_after.items())
-
         ledger = build_ledger(root, edits, before, after, getattr(backend, "raw_response", None)) + (
             EvidenceItem(kind="patch-application", source="proofpatch", value={"patch_sha256": patch_hash(edits), "expected_after": expected_after, "actual_after": actual_after, "applied_matches_proposal": applied_matches_proposal, "matches_proposed": applied_matches_proposal}),
             EvidenceItem(kind="protected-files", source="sha256", value={"before": protected_before, "after": protected_after, "unchanged": protected_before == protected_after}),
         )
-
         post_context = build_repository_context(root)
         claims = tuple(backend.claims(task, root, post_context))
         previous = _with_ledger(verify_repository(root, claims, test_command=test_command), ledger)
